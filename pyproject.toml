@@ -1,0 +1,50 @@
+[project]
+name = "oculus-drake-teleop"
+version = "0.0.1"
+description = "Package for graph imitation or affordance learning"
+readme = "README.md" # Optional
+
+# Specify which Python versions you support. In contrast to the
+# 'Programming Language' classifiers above, 'pip install' will check this
+# and refuse to install the project if the version does not match. See
+# https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
+requires-python = ">=3.8"
+
+# This is either text indicating the license for the distribution, or a file
+# that contains the license
+# https://packaging.python.org/en/latest/specifications/core-metadata/#license
+license = { text = "MIT" }
+
+# This field adds keywords for your project whoculus_setich will appear on the
+# project page. What does your project relate to?
+#
+# Note that this is a list of additional keywords, separated
+# by commas, to be used to assist searching for the distribution in a
+# larger catalog.
+authors = [
+    { name = "dangthanhan507", email = "andang@umich.edu" } # Optional
+]
+maintainers = [
+    { name = "dangthanhan507", email = "andang@umich.edu" } # Optional
+]
+
+# This field lists other packages that your project depends on to run.
+# Any package you put here will be installed by pip when your project is
+# installed, so they must be valid existing projects.
+#
+# For an analysis of this field vs pip's requirements files see:
+# https://packaging.python.org/discussions/install-requires-vs-requirements/
+dependencies = [# Optional
+    'drake',
+    'underactuated',
+    'manipulation',
+]
+
+[tool.setuptools]
+packages = ["oculus_drake"]
+
+[build-system]
+# These are the assumed default build requirements from pip:
+# https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
