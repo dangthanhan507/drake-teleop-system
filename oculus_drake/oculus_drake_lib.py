@@ -47,15 +47,20 @@ from pydrake.all import (
     GeometryInstance,
     MakePhongIllustrationProperties,
     Shape,
-    SourceId
+    SourceId,
+    ApplyMultibodyPlantConfig,
 )
-from manipulation.scenarios import AddMultibodyTriad
-from oculus_reader import OculusReader
-
+from manipulation import ConfigureParser
+from oculus_drake import PACKAGE_XML, SCENARIO_FILEPATH
+from manipulation.station import load_scenario, MakeHardwareStationInterface, MakeHardwareStation
+from oculus_reader.reader import OculusReader
+import numpy as np
+import time
 class OculusSystem(LeafSystem):
     def __init__(self, sensor_read_hz = 60.0):
         LeafSystem.__init__(self)
-        self.reader = OculusReader(print_FPS=False)
+        self.reader = OculusReader()
+        time.sleep(0.3)
         
         '''
             NOTE: (Structure of self.reader.get_transformations_and_buttons())
@@ -110,11 +115,12 @@ class OculusSystem(LeafSystem):
         self.right_pose = RigidTransform()
         self.oculus_read()
             
-        self.DeclarePeriodicPublishEvent(period_sec=1.0/sensor_read_hz, offset_sec=0.0, publish=self.oculus_read)
-        self.DeclareAbstractOutputPort("left_hand_pose", lambda: Value(RigidTransform()), self.StreamLeftPose)
+        self.DeclarePeriodicPublishEvent(period_sec=1.0/sensor_read_hz, offset_sec=0.0, publish=self.OculusRead)
+    def OculusRead(self, context):
+        self.oculus_read()
     def oculus_read(self):
         transform_dict, buttons_dict = self.reader.get_transformations_and_buttons()
-        
+        # print(transform_dict, buttons_dict)
         self.left_pose = RigidTransform(transform_dict['l'])
         self.right_pose = RigidTransform(transform_dict['r'])
         
@@ -144,56 +150,92 @@ class OculusSystem(LeafSystem):
         # joysticks
         self.leftJS = buttons_dict['leftJS']
         self.rightJS = buttons_dict['rightJS']
-    def StreamLeftPose(self, context, output):
-        output.set_value(self.left_pose)
-    def StreamRightPose(self, context, output):
-        output.set_value(self.right_pose)
+
+class OculusTeleopSystem(LeafSystem):
+    def __init__(self, oculus: OculusSystem):
+        LeafSystem.__init__(self)
+        self.oculus = oculus
         
-
-def AddAnchoredTriad(
-    source_id: SourceId,
-    scene_graph: SceneGraph,
-    length=0.25,
-    radius=0.01,
-    opacity=1.0,
-    X_FT=RigidTransform(),
-    name="frame",
-):
-    X_TG = RigidTransform(RotationMatrix.MakeYRotation(np.pi / 2), [length / 2.0, 0, 0])
-    geom = GeometryInstance(
-        X_FT.multiply(X_TG), Cylinder(radius, length), name + " x-axis"
-    )
-    geom.set_illustration_properties(
-        MakePhongIllustrationProperties([1, 0, 0, opacity])
-    )
-    scene_graph.RegisterAnchoredGeometry(source_id, geom)
-
-    # y-axis
-    X_TG = RigidTransform(RotationMatrix.MakeXRotation(np.pi / 2), [0, length / 2.0, 0])
-    geom = GeometryInstance(
-        X_FT.multiply(X_TG), Cylinder(radius, length), name + " y-axis"
-    )
-    geom.set_illustration_properties(
-        MakePhongIllustrationProperties([0, 1, 0, opacity])
-    )
-    scene_graph.RegisterAnchoredGeometry(source_id, geom)
-
-    # z-axis
-    X_TG = RigidTransform([0, 0, length / 2.0])
-    geom = GeometryInstance(
-        X_FT.multiply(X_TG), Cylinder(radius, length), name + " z-axis"
-    )
-    geom.set_illustration_properties(
-        MakePhongIllustrationProperties([0, 0, 1, opacity])
-    )
-    scene_graph.RegisterAnchoredGeometry(source_id, geom)
         
+        self.gripper_close = 0.03 # close gripper width
+        self.gripper_open  = 0.1
+        self.DeclareVectorOutputPort("gripper_out", 1, self.GetGripperOut)
+    def GetGripperOut(self, context, output):
+        trigger = self.oculus.rightTrig[0]
+        gripper_out = self.gripper_close if trigger > 0.5 else self.gripper_open
+        output.set_value(np.array([gripper_out]))
 
 # setup pose from oculus
-def setup_sim_teleop_diagram():
+def setup_sim_teleop_diagram(meshcat: Meshcat):
     builder = DiagramBuilder()
     oculus = builder.AddSystem(OculusSystem())
     
+    multibody_config = MultibodyPlantConfig()
+    plant_scene_graph_tuple = AddMultibodyPlant(multibody_config, builder)
+    plant : MultibodyPlant = plant_scene_graph_tuple[0]
+    scene_graph : SceneGraph = plant_scene_graph_tuple[1]
     
+    parser = Parser(plant, scene_graph)
+    ConfigureParser(parser)
+    parser.package_map().AddPackageXml(PACKAGE_XML)
+    
+    scenario_filename = SCENARIO_FILEPATH
+    scenario = load_scenario(filename=scenario_filename, scenario_name='Demo')
+    
+    directives = ModelDirectives(directives=scenario.directives)
+    added_models = ProcessModelDirectives(directives=directives, parser=parser) # list of model instances
+    
+    plant.Finalize()
+    
+    controller_block = builder.AddSystem(InverseDynamicsController(plant, kp=100*np.ones(9), ki=1*np.ones(9), kd=20*np.ones(9), has_reference_acceleration=False))
+    
+    qs_zero = builder.AddSystem(ConstantVectorSource(np.zeros(9) + 45 * np.pi / 180.0))
+    zero_vel_block   = builder.AddSystem(ConstantVectorSource(np.zeros(9)))
+    multiplexer_block = builder.AddSystem(Multiplexer([9,9]))
+    
+    builder.Connect(qs_zero.get_output_port(), multiplexer_block.get_input_port(0))
+    builder.Connect(zero_vel_block.get_output_port(), multiplexer_block.get_input_port(1))
+    
+    iiwa_instance = plant.GetModelInstanceByName('iiwa')
+    builder.Connect(multiplexer_block.get_output_port(), controller_block.get_input_port_desired_state())
+    builder.Connect(plant.get_state_output_port(), controller_block.get_input_port_estimated_state())
+    builder.Connect(controller_block.get_output_port(0), plant.get_actuation_input_port())
+    
+    AddDefaultVisualization(builder, meshcat)
+    
+    oculus_sys = builder.AddSystem(OculusSystem())
+    teleop_sys = builder.AddSystem(OculusTeleopSystem(oculus_sys))
+    
+    
+    
+    diagram = builder.Build()
+    return diagram
+
+
+
+def setup_teleop_diagram(meshcat):
+    builder = DiagramBuilder()
+    
+    scenario_data = """
+    directives:
+      - add_model:
+          name: wsg
+          file: package://manipulation/hydro/schunk_wsg_50_with_tip.sdf
+      - add_weld:
+          parent: world
+          child: wsg::body
+          X_PC:
+              translation: [0, 0, 0.09]
+              rotation: !Rpy { deg: [90, 0, 90]}
+    model_drivers:
+        wsg: !SchunkWsgDriver {}
+    """
+    scenario = load_scenario(data=scenario_data)
+    station = MakeHardwareStationInterface(scenario, meshcat=meshcat)
+    builder.AddSystem(station)
+    oculus_sys = builder.AddSystem(OculusSystem())
+    teleop_sys = builder.AddSystem(OculusTeleopSystem(oculus_sys))
+    
+    builder.Connect(teleop_sys.GetOutputPort("gripper_out"), station.GetInputPort("wsg.position"))
     diagram = builder.Build()
     return diagram

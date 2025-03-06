@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package>
+  <name>oculus-drake-teleop</name>
+  <version>0.0.0</version>
+  <description>Oculus Teleop for Imitation Learning</description>
+
+  <maintainer email="andang@umich.edu">An Dang</maintainer>
+  <license>MIT</license>
+</package>
