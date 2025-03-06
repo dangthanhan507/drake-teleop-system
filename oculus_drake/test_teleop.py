@@ -11,16 +11,123 @@ from pydrake.visualization import MeshcatPoseSliders
 
 from manipulation import running_as_notebook
 from manipulation.meshcat_utils import WsgButton
-from manipulation.station import load_scenario, MakeHardwareStation, AddIiwa, AddWsg, AddPlanarIiwa
+from manipulation.station import (
+    load_scenario, 
+    MakeHardwareStationInterface,
+    AddIiwa,
+    AddWsg,
+    AddPlanarIiwa,
+    Scenario,
+    ConfigureParser,
+    ProcessModelDirectives,
+    ModelDirectives,
+    _ApplyDriverConfigsSim,
+    _ApplyCameraConfigSim
+)
 from manipulation.scenarios import AddIiwaDifferentialIK
+import typing
 from pydrake.all import (
     MultibodyPlant,
+    Meshcat,
+    Parser,
+    AddMultibodyPlant,
     LeafSystem,
     Body,
     AbstractValue,
     RigidTransform,
-    AddDefaultVisualization
+    AddDefaultVisualization,
+    
 )
+from pydrake.all import AddDefaultVisualization
+def MakeHardwareStation(
+    scenario: Scenario,
+    meshcat: Meshcat = None,
+    *,
+    package_xmls: typing.List[str] = [],
+    hardware: bool = False,
+    parser_preload_callback: typing.Callable[[Parser], None] = None,
+    parser_prefinalize_callback: typing.Callable[[Parser], None] = None,
+):
+    """
+    If `hardware=False`, (the default) returns a HardwareStation diagram containing:
+      - A MultibodyPlant with populated via the directives in `scenario`.
+      - A SceneGraph
+      - The default Drake visualizers
+      - Any robot / sensors drivers specified in the YAML description.
+
+    If `hardware=True`, returns a HardwareStationInterface diagram containing the network interfaces to communicate directly with the hardware drivers.
+
+    Args:
+        scenario: A Scenario structure, populated using the `load_scenario` method.
+
+        meshcat: If not None, then AddDefaultVisualization will be added to the subdiagram using this meshcat instance.
+
+        package_xmls: A list of package.xml file paths that will be passed to the parser, using Parser.AddPackageXml().
+    """
+    if hardware:
+        return MakeHardwareStationInterface(
+            scenario=scenario, meshcat=meshcat, package_xmls=package_xmls
+        )
+
+    builder = DiagramBuilder()
+
+    # Create the multibody plant and scene graph.
+    sim_plant, scene_graph = AddMultibodyPlant(
+        config=scenario.plant_config, builder=builder
+    )
+    
+
+    parser = Parser(sim_plant)
+    for p in package_xmls:
+        parser.package_map().AddPackageXml(p)
+    ConfigureParser(parser)
+    if parser_preload_callback:
+        parser_preload_callback(parser)
+
+    # Add model directives.
+    added_models = ProcessModelDirectives(
+        directives=ModelDirectives(directives=scenario.directives),
+        parser=parser,
+    )
+
+    if parser_prefinalize_callback:
+        parser_prefinalize_callback(parser)
+
+    # Now the plant is complete.
+    sim_plant.Finalize()
+    AddDefaultVisualization(builder, meshcat)
+
+    # Add drivers.
+    _ApplyDriverConfigsSim(
+        driver_configs=scenario.model_drivers,
+        sim_plant=sim_plant,
+        directives=scenario.directives,
+        models_from_directives=added_models,
+        package_xmls=package_xmls,
+        builder=builder,
+    )
+
+    # Add scene cameras.
+    for _, camera in scenario.cameras.items():
+        _ApplyCameraConfigSim(config=camera, builder=builder)
+
+    # Add visualization.
+    # ApplyVisualizationConfig(scenario.visualization, builder, meshcat=meshcat)
+
+    # Export "cheat" ports.
+    builder.ExportOutput(scene_graph.get_query_output_port(), "query_object")
+    builder.ExportOutput(
+        sim_plant.get_contact_results_output_port(), "contact_results"
+    )
+    builder.ExportOutput(
+        sim_plant.get_state_output_port(), "plant_continuous_state"
+    )
+    builder.ExportOutput(sim_plant.get_body_poses_output_port(), "body_poses")
+
+    diagram = builder.Build()
+    diagram.set_name("station")
+    return diagram
+
 class MultibodyPositionToBodyPose(LeafSystem):
     """A system that computes a body pose from a MultibodyPlant position vector. The
     output port calls `plant.SetPositions()` and then `plant.EvalBodyPoseInWorld()`.
@@ -54,7 +161,7 @@ scenario_data = """
 directives:
 - add_model:
     name: iiwa
-    file: package://manipulation/planar_iiwa14_no_collision.urdf
+    file: package://drake/manipulation/models/iiwa_description/sdf/iiwa14_no_collision.sdf
     default_joint_positions:
         iiwa_joint_2: [0.1]
         iiwa_joint_4: [-1.2]
@@ -90,20 +197,6 @@ directives:
     child: work_table::link
     X_PC:
         translation: [0.75, 0, -0.7645]
-# Restrict the brick to move only in the x-z plane
-- add_model:
-    name: planar_joint
-    file: package://manipulation/planar_joint.sdf
-    default_joint_positions:
-        planar_joint: [0.6, 0, 0]
-- add_weld:
-    parent: world
-    child: planar_joint::parent
-    X_PC:
-        rotation: !Rpy { deg: [90, 0, 0]}
-- add_weld:
-    parent: planar_joint::child
-    child: foam_brick::base_link
 model_drivers:
     iiwa: !IiwaDriver
       control_mode: position_only
@@ -114,7 +207,6 @@ model_drivers:
 
 def teleop_2d():
     scenario = load_scenario(data=scenario_data)
-    meshcat.Set2dRenderMode(xmin=-0.25, xmax=1.5, ymin=-0.1, ymax=1.3)
 
     builder = DiagramBuilder()
 
@@ -122,7 +214,7 @@ def teleop_2d():
 
     # Set up differential inverse kinematics.
     diff_ik_plant = MultibodyPlant(time_step=1e-3)
-    controller_iiwa = AddPlanarIiwa(diff_ik_plant)
+    controller_iiwa = AddIiwa(diff_ik_plant)
     AddWsg(diff_ik_plant, controller_iiwa, welded=True)
     diff_ik_plant.Finalize()
     
