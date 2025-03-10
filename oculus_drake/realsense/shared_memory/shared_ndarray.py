@@ -164,4 +164,4 @@ class SharedNDArray(Generic[SharedT]):
         return np.ndarray(self.shape, dtype=self.dtype, buffer=self.shm.buf)
 
     def __del__(self):
-        self.shm.close()
+        self.shm.close()w
