@@ -1,0 +1,40 @@
+Demo:
+  directives:
+    # Add iiwa_thanos
+      - add_model:
+          name: iiwa
+          file: package://drake/manipulation/models/iiwa_description/sdf/iiwa14_no_collision.sdf
+          default_joint_positions:
+              iiwa_joint_1: [0]
+              iiwa_joint_2: [0]
+              iiwa_joint_3: [0]
+              iiwa_joint_4: [0]
+              iiwa_joint_5: [0]
+              iiwa_joint_6: [0]
+              iiwa_joint_7: [0]
+      - add_weld:
+          parent: world
+          child: iiwa::base
+      # Add finger frames
+      - add_frame:
+          name: wsg50_plate
+          X_PF:
+            base_frame: iiwa::iiwa_link_ee_kuka
+            translation: [0.0, 0.0, 0.0]
+            rotation: !Rpy { deg: [0.0, 0.0, 0.0]}
+      - add_frame:
+          name: wsg50_base_link
+          X_PF:
+            base_frame: wsg50_plate
+            translation: [0.0, 0.0, 0.1]
+            rotation: !Rpy { deg: [0.0, 0.0, 0.0]}
+      - add_frame:
+          name: tag_frame
+          X_PF:
+            base_frame: wsg50_base_link
+            translation: [-0.0365, -0.025, 0.0365]
+            rotation: !Rpy { deg: [-90.0, 0.0, 180.0]}
+
+  model_drivers:
+    iiwa_thanos: !IiwaDriver
+      control_mode: position_only
