@@ -23,62 +23,6 @@ import os
 import multiprocessing as mp
 import cv2
 
-# AsyncWriter
-
-class CameraRecorder(LeafSystem):
-    _obs_queue = mp.Queue()
-    
-    def __init__(self, save_folder, fps=15.0):
-        LeafSystem.__init__(self)
-        self.fps = fps
-        self.save_folder = save_folder
-        self.joints_dict = []
-        self.DeclarePeriodicPublishEvent(period_sec=1.0/self.fps, offset_sec=0.0, publish=self.write)
-    
-    def start(self):    
-        self.process_save = mp.Process(target=CameraRecorder.camera_async_write, args=(self.save_folder,))
-        self.process_save.start()
-        time.sleep(5.0)
-    def end(self):
-        self.process_save.join()
-        
-        # save joints
-        np.save(f'{self.save_folder}/joints.npy', self.joints_dict)
-    def write(self, context):
-        _obs_queue = CameraRecorder._obs_queue
-        joints = self.get_input_port().Eval(context)
-        _obs_queue.put(5)
-        self.joints_dict.append(joints)
-    
-    @staticmethod
-    def camera_async_write(save_folder):
-        _obs_queue = CameraRecorder._obs_queue
-        cameras = Cameras(
-            WH=[640, 480],
-            capture_fps=15,
-            obs_fps=30,
-            n_obs_steps=1,
-            enable_color=True,
-            enable_depth=True,
-            process_depth=True,
-        )
-        cameras.start(exposure_time=10)
-        for i in range(cameras.n_fixed_cameras):
-            os.makedirs(f'{save_folder}/camera_{i}/', exist_ok=True)
-        trigger = 5
-        index = 0
-        while trigger is not None:
-            if not _obs_queue.empty():
-                trigger = _obs_queue.get()
-                recent_obs = cameras.get_obs(get_color=True, get_depth=True)
-                if trigger is None:
-                    break
-                for i in range(cameras.n_fixed_cameras):
-                    cv2.imwrite(f'{save_folder}/camera_{i}/color_{ "{:04d}".format(index) }.png', recent_obs[f'color_{i}'][-1])
-                    cv2.imwrite(f'{save_folder}/camera_{i}/depth_{ "{:04d}".format(index) }.png', (recent_obs[f'depth_{i}'][-1]* 1000.0).astype(np.uint16) )
-                index += 1
-        print("Thread done!")
-
 class OculusSystem(LeafSystem):
     def __init__(self, sensor_read_hz = 60.0, save_cams = False):
         LeafSystem.__init__(self)
@@ -299,8 +243,7 @@ class OculusTeleopSystem(LeafSystem):
 def setup_sim_teleop_diagram(meshcat: Meshcat):
     builder = DiagramBuilder()
     
-    scenario_filename = SCENARIO_FILEPATH
-    scenario = load_scenario(filename=scenario_filename, scenario_name='Demo')
+    scenario = load_scenario(filename=SCENARIO_FILEPATH, scenario_name='Demo')
     station = builder.AddNamedSystem("station", MakeHardwareStation(scenario, meshcat))
     
     plant = station.GetSubsystemByName("plant")
@@ -409,5 +352,112 @@ def setup_teleop_diagram(meshcat):
         teleop_sys.GetOutputPort("controller_pose"), differential_ik.GetInputPort("X_WE_desired")
     )
     builder.Connect(teleop_sys.GetOutputPort("gripper_out"), station.GetInputPort("wsg.position"))
+    
+    # export things we want to record
+    builder.ExportOutput( station.GetOutputPort("iiwa.position_measured"), "iiwa.position_measured" )
+    builder.ExportOutput( teleop_sys.GetOutputPort("controller_pose"), "X_WE_desired")
+    builder.ExportOutput( teleop_sys.GetOutputPort("gripper_out"), "gripper_out")
+    
     diagram = builder.Build()
     return diagram
+
+########### RECORD CODE ###########
+
+# AsyncWriter
+class CameraRecorder(LeafSystem):
+    _obs_queue = mp.Queue()
+    
+    def __init__(self, save_folder, fps=15.0):
+        LeafSystem.__init__(self)
+        self.fps = fps
+        self.save_folder = save_folder
+        self.DeclarePeriodicPublishEvent(period_sec=1.0/self.fps, offset_sec=0.0, publish=self.write)
+        self.start()
+        
+    def start(self):    
+        self.process_save = mp.Process(target=CameraRecorder.camera_async_write, args=(self.save_folder,))
+        self.process_save.start()
+        time.sleep(5.0)
+    def end(self):
+        self.process_save.join()
+    def write(self, context):
+        _obs_queue = CameraRecorder._obs_queue
+        _obs_queue.put(5)
+    
+    @staticmethod
+    def camera_async_write(save_folder):
+        _obs_queue = CameraRecorder._obs_queue
+        cameras = Cameras(
+            WH=[640, 480],
+            capture_fps=15,
+            obs_fps=30,
+            n_obs_steps=1,
+            enable_color=True,
+            enable_depth=True,
+            process_depth=True,
+        )
+        cameras.start(exposure_time=10)
+        for i in range(cameras.n_fixed_cameras):
+            os.makedirs(f'{save_folder}/camera_{i}/', exist_ok=True)
+        trigger = 5
+        index = 0
+        while trigger is not None:
+            if not _obs_queue.empty():
+                trigger = _obs_queue.get()
+                recent_obs = cameras.get_obs(get_color=True, get_depth=True)
+                if trigger is None:
+                    break
+                for i in range(cameras.n_fixed_cameras):
+                    cv2.imwrite(f'{save_folder}/camera_{i}/color_{ "{:04d}".format(index) }.png', recent_obs[f'color_{i}'][-1])
+                    cv2.imwrite(f'{save_folder}/camera_{i}/depth_{ "{:04d}".format(index) }.png', (recent_obs[f'depth_{i}'][-1]* 1000.0).astype(np.uint16) )
+                index += 1
+        print("Thread done!")
+
+class KukaRecorder(LeafSystem):
+    def __init__(self, save_folder, hz=15.0):
+        LeafSystem.__init__(self)
+        self.save_folder = save_folder
+        self.q_port = self.DeclareVectorInputPort("joints", 7)
+        self.diffik_out_port = self.DeclareAbstractInputPort("X_WE_desired", Value(RigidTransform()))
+        self.gripper_out_port = self.DeclareVectorInputPort("gripper_command", 1)
+        self.DeclarePeriodicPublishEvent(period_sec=1.0/hz, offset_sec=0.0, publish=self.record)
+        self.ts = []
+        self.joints_list = []
+        self.diffik_out = []
+        self.gripper_list = []
+    def record(self, context):
+        q = self.q_port.Eval(context)
+        X_WE_desired = self.diffik_out_port.Eval(context)
+        gripper_command = self.gripper_out_port.Eval(context)
+        self.joints_list.append(q)
+        self.diffik_out.append(X_WE_desired.GetAsMatrix4())
+        self.gripper_list.append(gripper_command)
+    def save(self):
+        np.save(os.path.join(self.save_folder, 'joints.npy'), np.array(self.joints_list))
+        np.save(os.path.join(self.save_folder, 'diffik_out.npy'), np.array(self.diffik_out))
+        np.save(os.path.join(self.save_folder, 'gripper_out.npy'), np.array(self.gripper_list))
+        
+def record_teleop_diagram(meshcat, save_folder, fps):
+    builder = DiagramBuilder()
+    teleop_diagram = setup_teleop_diagram(meshcat)
+    teleop = builder.AddSystem(teleop_diagram)
+    camera_recorder = CameraRecorder(save_folder, fps)
+    camera_recorder_block = builder.AddSystem(camera_recorder)
+    kuka_recorder   = KukaRecorder(save_folder, fps)
+    kuka_recorder_block   = builder.AddSystem(kuka_recorder)
+    
+    builder.Connect(
+        teleop_diagram.GetOutputPort("iiwa.position_measured"), kuka_recorder.GetInputPort("joints")
+    )
+    builder.Connect(
+        teleop_diagram.GetOutputPort("X_WE_desired"), kuka_recorder_block.GetInputPort("X_WE_desired")
+    )
+    builder.Connect(
+        teleop_diagram.GetOutputPort("gripper_out"), kuka_recorder.GetInputPort("gripper_command")
+    )
+    
+    
+    diagram = builder.Build()
+    
+    _end_record_fn = lambda: (camera_recorder.end(), kuka_recorder.save())
+    return diagram, _end_record_fn
