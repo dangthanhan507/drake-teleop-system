@@ -4,64 +4,83 @@ from pydrake.all import (
     Value,
     DiagramBuilder,
     MultibodyPlant,
-    DifferentialInverseKinematicsIntegrator,
-    DoDifferentialInverseKinematics,
-    DifferentialInverseKinematicsStatus,
-    EventStatus,
     Meshcat,
-    ModelDirectives,
-    Parser,
-    SceneGraph,
-    AddMultibodyPlant,
-    ProcessModelDirectives,
-    AddDefaultVisualization,
-    Cylinder,
-    UnitInertia,
-    SpatialInertia,
     RotationMatrix,
-    MultibodyPlantConfig,
     Multiplexer,
-    ConstantVectorSource,
-    InverseDynamicsController,
-    FixedOffsetFrame,
-    ApplyCameraConfig,
-    CameraInfo,
-    Diagram,
-    ImageRgba8U,
-    ImageDepth16U,
-    ImageLabel16I,
-    ColorizeLabelImage,
-    PackageMap,
-	IllustrationProperties,
-	GeometrySet,
-	Role,
-	RoleAssign,
-    InverseKinematics,
-    RollPitchYaw,
-    SnoptSolver,
-    Cylinder,
-    Box,
-    UnitInertia,
-    SpatialInertia,
     RotationMatrix,
-    GeometryInstance,
-    MakePhongIllustrationProperties,
-    Shape,
-    SourceId,
-    ApplyMultibodyPlantConfig,
     ConstantValueSource
 )
 from manipulation.scenarios import AddMultibodyTriad
-from manipulation.meshcat_utils import WsgButton
-from teleop_utils import MakeHardwareStation, MultibodyPositionToBodyPose, AddIiwaDifferentialIK, MakeFakeStation
-from manipulation import ConfigureParser
-from oculus_drake import PACKAGE_XML, SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH
-from manipulation.station import load_scenario, MakeHardwareStationInterface, AddIiwa, AddWsg
+from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
+from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH
+from manipulation.station import load_scenario, MakeHardwareStationInterface
 from oculus_reader.reader import OculusReader
 import numpy as np
 import time
+
+from oculus_drake.realsense.cameras import Cameras
+import os
+import multiprocessing as mp
+import cv2
+
+# AsyncWriter
+
+class CameraRecorder(LeafSystem):
+    _obs_queue = mp.Queue()
+    
+    def __init__(self, save_folder, fps=15.0):
+        LeafSystem.__init__(self)
+        self.fps = fps
+        self.save_folder = save_folder
+        self.joints_dict = []
+        self.DeclarePeriodicPublishEvent(period_sec=1.0/self.fps, offset_sec=0.0, publish=self.write)
+    
+    def start(self):    
+        self.process_save = mp.Process(target=CameraRecorder.camera_async_write, args=(self.save_folder,))
+        self.process_save.start()
+        time.sleep(5.0)
+    def end(self):
+        self.process_save.join()
+        
+        # save joints
+        np.save(f'{self.save_folder}/joints.npy', self.joints_dict)
+    def write(self, context):
+        _obs_queue = CameraRecorder._obs_queue
+        joints = self.get_input_port().Eval(context)
+        _obs_queue.put(5)
+        self.joints_dict.append(joints)
+    
+    @staticmethod
+    def camera_async_write(save_folder):
+        _obs_queue = CameraRecorder._obs_queue
+        cameras = Cameras(
+            WH=[640, 480],
+            capture_fps=15,
+            obs_fps=30,
+            n_obs_steps=1,
+            enable_color=True,
+            enable_depth=True,
+            process_depth=True,
+        )
+        cameras.start(exposure_time=10)
+        for i in range(cameras.n_fixed_cameras):
+            os.makedirs(f'{save_folder}/camera_{i}/', exist_ok=True)
+        trigger = 5
+        index = 0
+        while trigger is not None:
+            if not _obs_queue.empty():
+                trigger = _obs_queue.get()
+                recent_obs = cameras.get_obs(get_color=True, get_depth=True)
+                if trigger is None:
+                    break
+                for i in range(cameras.n_fixed_cameras):
+                    cv2.imwrite(f'{save_folder}/camera_{i}/color_{ "{:04d}".format(index) }.png', recent_obs[f'color_{i}'][-1])
+                    cv2.imwrite(f'{save_folder}/camera_{i}/depth_{ "{:04d}".format(index) }.png', (recent_obs[f'depth_{i}'][-1]* 1000.0).astype(np.uint16) )
+                index += 1
+        print("Thread done!")
+
 class OculusSystem(LeafSystem):
-    def __init__(self, sensor_read_hz = 60.0):
+    def __init__(self, sensor_read_hz = 60.0, save_cams = False):
         LeafSystem.__init__(self)
         self.reader = OculusReader()
         time.sleep(0.3)
@@ -118,6 +137,8 @@ class OculusSystem(LeafSystem):
         self.left_pose = RigidTransform()
         self.right_pose = RigidTransform()
         self.oculus_read()
+        
+        self.save_cams = save_cams        
             
         self.DeclarePeriodicPublishEvent(period_sec=1.0/sensor_read_hz, offset_sec=0.0, publish=self.OculusRead)
     def OculusRead(self, context):
