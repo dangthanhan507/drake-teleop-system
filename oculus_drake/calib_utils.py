@@ -75,10 +75,64 @@ def visualize_detections(image, detections):
             image = plotPoint(image, corner, CORNER_COLOR)
     return image
 
-class CameraCalibrateSystem(LeafSystem):
-    def __init__(self, cameras: Cameras, Ks, tag_width: float = 0.056, save_data=False):
+import time
+import multiprocessing as mp
+class CameraCalibrateVisSystemAsync(LeafSystem):
+    _obs_queue = mp.Queue()
+    
+    def __init__(self, fps=30.0):
         LeafSystem.__init__(self)
-        self.save_data = save_data
+        self.fps = fps
+        self.DeclarePeriodicPublishEvent(period_sec=1.0/self.fps, offset_sec=0.0, publish=self.write)
+        self.start()
+        
+    def start(self):    
+        self.process_save = mp.Process(target=CameraCalibrateVisSystemAsync.camera_async_vis)
+        self.process_save.start()
+        time.sleep(5.0)
+    def end(self):
+        self.process_save.join()
+    def write(self, context):
+        _obs_queue = CameraCalibrateVisSystemAsync._obs_queue
+        _obs_queue.put(5)
+    
+    @staticmethod
+    def camera_async_vis():
+        _obs_queue = CameraCalibrateVisSystemAsync._obs_queue
+        cameras = Cameras(
+            WH=[640, 480],
+            capture_fps=15,
+            obs_fps=30,
+            n_obs_steps=1,
+            enable_color=True,
+            enable_depth=True,
+            process_depth=True,
+        )
+        detector = pupil_apriltags.Detector(families='tagStandard41h12')
+        cameras.start(exposure_time=10)
+        trigger = 5
+        index = 0
+        while trigger is not None:
+            if not _obs_queue.empty():
+                trigger = _obs_queue.get()
+                obs = cameras.get_obs(get_color=True, get_depth=True)
+                for i in range(cameras.n_fixed_cameras):
+                    color = obs[f'color_{i}'][-1]
+                    detections = detector.detect(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY))
+                    color = visualize_detections(color, detections)
+                    cv2.imshow(f'cam{i}', color)
+                cv2.waitKey(1)
+                
+                if trigger is None:
+                    break
+                index += 1
+        print("Thread done!")
+
+
+class CameraCalibrateVisSystem(LeafSystem):
+    def __init__(self, cameras: Cameras, Ks, tag_width: float = 0.056, use_kuka=False):
+        LeafSystem.__init__(self)
+        self.use_kuka = use_kuka
         self.tag_width = tag_width
         self.Ks = Ks
         self.cameras = cameras
@@ -92,7 +146,7 @@ class CameraCalibrateSystem(LeafSystem):
         self.obs = None
         
         
-        if save_data:
+        if use_kuka:
             # take as input Kuka
             self.DeclareAbstractInputPort("tag2kukabase", Value(RigidTransform()))            
             #get streamed info

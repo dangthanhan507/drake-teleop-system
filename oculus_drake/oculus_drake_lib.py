@@ -295,6 +295,22 @@ def setup_sim_teleop_diagram(meshcat: Meshcat):
     diagram = builder.Build()
     return diagram
 
+class KukaEndEffectorPose(LeafSystem):
+    def __init__(self, hardware_plant: MultibodyPlant, kuka_frame_name = 'iiwa_link_7'):
+        LeafSystem.__init__(self)
+        self._plant = hardware_plant
+        self._plant_context = hardware_plant.CreateDefaultContext()
+        self._frame_name = kuka_frame_name
+        
+        self.DeclareVectorInputPort("kuka_q", 7)
+        #make abstract port for kuka pose
+        self.DeclareAbstractOutputPort("kuka_pose", lambda: Value(RigidTransform()), self.CalcOutput)
+        
+    def CalcOutput(self, context, output):
+        q = self.get_input_port().Eval(context)
+        self._plant.SetPositions(self._plant_context, q)
+        pose = self._plant.GetFrameByName(self._frame_name).CalcPoseInWorld(self._plant_context)
+        output.set_value(pose)
 
 def setup_teleop_diagram(meshcat):
     builder = DiagramBuilder()
