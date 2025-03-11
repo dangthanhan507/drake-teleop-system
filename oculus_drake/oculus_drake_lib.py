@@ -378,7 +378,7 @@ def set_kuka_joints(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_
         if joint_speed is not None:
             max_dq = np.max(np.abs(goal_q - curr_q))
             endtime_from_speed = max_dq / joint_speed # joint_speed is in rad/s
-            endtime = max(endtime_from_speed, 5.0) # at least 5 seconds
+            endtime = max(endtime_from_speed, endtime) # at least 5 seconds
         
         ts = np.array([0.0, endtime])
         qs = np.array([curr_q, goal_q])
