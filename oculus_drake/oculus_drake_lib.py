@@ -8,11 +8,14 @@ from pydrake.all import (
     RotationMatrix,
     Multiplexer,
     RotationMatrix,
-    ConstantValueSource
+    ConstantValueSource,
+    PiecewisePolynomial,
+    TrajectorySource,
+    Simulator
 )
 from manipulation.scenarios import AddMultibodyTriad
 from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
-from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH
+from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
 from oculus_reader.reader import OculusReader
 import numpy as np
@@ -361,6 +364,44 @@ def setup_teleop_diagram(meshcat):
     diagram = builder.Build()
     return diagram
 
+def set_kuka_joints(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_time = 2.0, use_mp = False):
+    def set_kuka_joints_fn(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_time = 2.0):
+        builder = DiagramBuilder()
+        scenario = load_scenario(filename=SCENARIO_NO_WSG_FILEPATH, scenario_name='Demo')
+        
+        station = MakeHardwareStationInterface(scenario)
+        # get curr_q
+        station_context = station.CreateDefaultContext()
+        station.ExecuteInitializationEvents(station_context)
+        curr_q = station.GetOutputPort("iiwa.position_measured").Eval(station_context)
+        
+        if joint_speed is not None:
+            max_dq = np.max(np.abs(goal_q - curr_q))
+            endtime_from_speed = max_dq / joint_speed # joint_speed is in rad/s
+            endtime = max(endtime_from_speed, 5.0) # at least 5 seconds
+        
+        ts = np.array([0.0, endtime])
+        qs = np.array([curr_q, goal_q])
+        traj = PiecewisePolynomial.FirstOrderHold(ts, qs.T)
+        traj_block = builder.AddSystem(TrajectorySource(traj))
+        
+        station_block = builder.AddNamedSystem("station", station)
+        builder.Connect(
+            traj_block.get_output_port(),
+            station_block.GetInputPort("iiwa.position")
+        )
+        diagram = builder.Build()
+        
+        simulator = Simulator(diagram)
+        simulator.set_target_realtime_rate(1.0)
+        simulator.AdvanceTo(endtime + pad_time)
+    if use_mp:
+        proc = mp.Process(target=set_kuka_joints_fn, args=(goal_q, endtime, joint_speed, pad_time))
+        proc.start()
+        proc.join()
+    else:
+        set_kuka_joints_fn(goal_q, endtime, joint_speed, pad_time)
+        
 ########### RECORD CODE ###########
 
 # AsyncWriter
