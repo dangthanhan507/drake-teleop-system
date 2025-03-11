@@ -49,8 +49,9 @@ if __name__ == '__main__':
             print()
     meshcat.DeleteButton("Stop Simulation")
     meshcat.DeleteButton("Record Joint")
-    
-    joints = np.array(joints)
     if len(joints) > 0:
+        joints = np.array(joints)
         np.save(args.save_file, joints)
-    print("Done")
+    if args.camera:
+        camera_tag_pub.end()
+    input("Done")

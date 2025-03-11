@@ -1,16 +1,22 @@
 import numpy as np
-from hardware.kuka import goto_joints_mp, curr_pose_mp
 import argparse
-import apriltag
+import pupil_apriltags
 from tqdm import tqdm
-from hardware.cameras import Cameras, save_extrinsics
+from oculus_drake.realsense.cameras import Cameras
+from oculus_drake.oculus_drake_lib import set_kuka_joints, get_kuka_pose
+from oculus_drake import CALIB_SCENARIO_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH
 # given list of joints, follow each joint and take 10 seconds to go to each joint
 from collections import defaultdict
 import cv2
+import json
+def save_extrinsics(json_dict, filename):
+    with open(filename, 'w') as f:
+        json.dump(json_dict, f)
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--file", type=str, default="../calib_data/joints/joint_pos.npy")
+    argparser.add_argument("--file", type=str, default="config/calibration_joints.npy")
+    argparser.add_argument('--out_file', type=str, default='config/camera_extrinsics.json')
     args = argparser.parse_args()
     
     joints = np.load(args.file) #(N, 7)
@@ -25,13 +31,17 @@ if __name__ == '__main__':
         process_depth=True
     )
     cameras.start(exposure_time=10)
-    detector = apriltag.Detector()
+    detector = pupil_apriltags.Detector(families='tagStandard41h12')
     camera_datapoints = defaultdict(list)
     
     print(joints.shape)
+    
+    # print in blue starting joints run
+    print("\033[94mStarting collection\033[0m")
     for i in tqdm(range(joints.shape[0])):
-        goto_joints_mp(joints[i, :], endtime=30.0, joint_speed=2.0 * np.pi / 180.0)
-        pose = curr_pose_mp("../config/calib_med.yaml", "calibration_frame")
+        joint = joints[i]
+        set_kuka_joints(joint, endtime=30.0, joint_speed=5.0 * np.pi / 180.0, pad_time=2.0)
+        pose = get_kuka_pose(CALIB_SCENARIO_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH, "tag_frame", use_mp=True)
         pt3d = pose.translation()
         obs = cameras.get_obs()
         
@@ -42,7 +52,13 @@ if __name__ == '__main__':
                 if detect.tag_id == 0:
                     pt2d = detect.center
                     camera_datapoints[f'cam{i}'].append((pt2d, pt3d))
+    # print in red finished joints data collection
+    print("\033[91mFinished collection\033[0m")
+    for i in range(cameras.n_fixed_cameras):
+        print(f"cam{i} has {len(camera_datapoints[f'cam{i}'])} points")
     
+    # print in blue starting camera calibration
+    print("\033[94mStarting calibration\033[0m")
     Ks = cameras.get_intrinsics()
     camera_json = dict()
     for i in range(cameras.n_fixed_cameras):
@@ -61,5 +77,6 @@ if __name__ == '__main__':
         H[:3, 3] = tvec.flatten()
         camera_json[f'cam{i}'] = H.tolist()
         print(np.linalg.inv(H))
-    save_extrinsics(camera_json, '../config/camera_extrinsics_robust.json')
+    save_extrinsics(camera_json, args.out_file)
+    print("\033[91mFinished calibration\033[0m")
     print("Done")

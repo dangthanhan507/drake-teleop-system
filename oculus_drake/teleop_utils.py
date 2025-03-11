@@ -52,6 +52,9 @@ def MakeFakeStation(
 
     # Now the plant is complete.
     sim_plant.Finalize()
+    if meshcat:
+        AddDefaultVisualization(builder, meshcat)
+    
     diagram = builder.Build()
     return diagram
 

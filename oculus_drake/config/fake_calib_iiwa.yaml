@@ -40,7 +40,3 @@ Demo:
             base_frame: wsg50_base_link
             translation: [-0.0365, -0.025, 0.0365]
             rotation: !Rpy { deg: [-90.0, 0.0, 180.0]}
-
-  model_drivers:
-    iiwa: !IiwaDriver
-      control_mode: position_only

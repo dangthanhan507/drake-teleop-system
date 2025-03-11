@@ -91,6 +91,7 @@ class CameraCalibrateVisSystemAsync(LeafSystem):
         self.process_save.start()
         time.sleep(5.0)
     def end(self):
+        CameraCalibrateVisSystemAsync._obs_queue.put(None)
         self.process_save.join()
     def write(self, context):
         _obs_queue = CameraCalibrateVisSystemAsync._obs_queue
@@ -114,6 +115,8 @@ class CameraCalibrateVisSystemAsync(LeafSystem):
         index = 0
         while trigger is not None:
             if not _obs_queue.empty():
+                if trigger is None:
+                    break
                 trigger = _obs_queue.get()
                 obs = cameras.get_obs(get_color=True, get_depth=True)
                 for i in range(cameras.n_fixed_cameras):
@@ -122,10 +125,10 @@ class CameraCalibrateVisSystemAsync(LeafSystem):
                     color = visualize_detections(color, detections)
                     cv2.imshow(f'cam{i}', color)
                 cv2.waitKey(1)
-                
-                if trigger is None:
-                    break
                 index += 1
+        while not _obs_queue.empty():
+            trigger = _obs_queue.get()
+        cv2.destroyAllWindows()
         print("Thread done!")
 
 

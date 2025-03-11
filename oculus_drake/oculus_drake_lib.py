@@ -15,7 +15,7 @@ from pydrake.all import (
 )
 from manipulation.scenarios import AddMultibodyTriad
 from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
-from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH
+from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH, CALIB_SCENARIO_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
 from oculus_reader.reader import OculusReader
 import numpy as np
@@ -394,7 +394,7 @@ def set_kuka_joints(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_
         if joint_speed is not None:
             max_dq = np.max(np.abs(goal_q - curr_q))
             endtime_from_speed = max_dq / joint_speed # joint_speed is in rad/s
-            endtime = max(endtime_from_speed, endtime) # at least 5 seconds
+            endtime = max(endtime_from_speed, 5.0) # at least 5 seconds
         
         ts = np.array([0.0, endtime])
         qs = np.array([curr_q, goal_q])
@@ -417,7 +417,33 @@ def set_kuka_joints(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_
         proc.join()
     else:
         set_kuka_joints_fn(goal_q, endtime, joint_speed, pad_time)
+
+def get_kuka_pose(scenario_filepath=SCENARIO_FILEPATH, fake_scenario_filepath=FAKE_CALIB_SCENARIO_FILEPATH, frame_name='iiwa_link_7', use_mp=False):
+    def get_kuka_pose_fn(scenario_filepath=SCENARIO_FILEPATH, fake_scenario_filepath=FAKE_CALIB_SCENARIO_FILEPATH, frame_name='iiwa_link_7'):
+        scenario = load_scenario(filename=scenario_filepath, scenario_name='Demo')
+        station = MakeHardwareStationInterface(scenario)
+        station_context = station.CreateDefaultContext()
+        station.ExecuteInitializationEvents(station_context)
+        curr_q = station.GetOutputPort("iiwa.position_measured").Eval(station_context)
         
+        fake_scenario = load_scenario(filename=fake_scenario_filepath, scenario_name='Demo')
+        fake_station = MakeFakeStation(fake_scenario)
+        fake_plant = fake_station.GetSubsystemByName("plant")
+        fake_plant_context = fake_plant.CreateDefaultContext()
+        fake_plant.SetPositions(fake_plant_context, fake_plant.GetModelInstanceByName("iiwa"), curr_q)
+        # get pose
+        pose = fake_plant.GetFrameByName(frame_name).CalcPoseInWorld(fake_plant_context)
+        return pose
+    def fn(q: mp.Queue, scenario_filepath=SCENARIO_FILEPATH, fake_scenario_filepath=FAKE_CALIB_SCENARIO_FILEPATH, frame_name='iiwa_link_7'):
+        q.put(get_kuka_pose_fn(scenario_filepath, fake_scenario_filepath, frame_name))
+    if use_mp:
+        q = mp.Queue()
+        proc = mp.Process(target=fn, args=(q, scenario_filepath, fake_scenario_filepath, frame_name))
+        proc.start()
+        proc.join()
+        return q.get()
+    else:
+        return get_kuka_pose_fn(scenario_filepath, fake_scenario_filepath, frame_name)
 ########### RECORD CODE ###########
 
 # AsyncWriter
