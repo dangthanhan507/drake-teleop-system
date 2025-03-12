@@ -18,7 +18,7 @@ import os
 import numpy as np
 import cv2
 import time
-
+import psutil
 class ManualPublishPCL(LeafSystem):
     def __init__(self, load_folder, extrinsics_folder, intrinsics_folder):
         LeafSystem.__init__(self)
@@ -90,14 +90,14 @@ if __name__ == '__main__':
     
     ts = np.load(os.path.join(args.load_folder, "ts.npy"))
     joints = np.load(os.path.join(args.load_folder, "joints.npy"))
-    gripper_pos = np.load(os.path.join(args.load_folder, "gripper_out.npy"))
-    
+    gripper_pos = np.load(os.path.join(args.load_folder, "gripper_pos.npy"))[:, np.newaxis]
     # convert gripper_pos to acceptable in drake sim format
     gripper_pos = np.concatenate([-gripper_pos, gripper_pos], axis=1) / 2
     
     meshcat.StartRecording()
     for i in range(len(ts)):
-        if i % 10 == 0:
+        memory = psutil.virtual_memory()
+        if memory.percent > 60: # if memory usage is high, wait
             meshcat_pcl_vis.Delete()
         root_diagram_context.SetTime(ts[i])
         plant.SetPositions(plant_context, plant.GetModelInstanceByName("iiwa"), joints[i])

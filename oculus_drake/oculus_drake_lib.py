@@ -377,6 +377,7 @@ def setup_teleop_diagram(meshcat):
     builder.ExportOutput( teleop_sys.GetOutputPort("controller_pose"), "X_WE_desired")
     builder.ExportOutput( teleop_sys.GetOutputPort("gripper_out"), "gripper_out")
     builder.ExportOutput( station.GetOutputPort("wsg.state_measured"), "wsg.state_measured")
+    builder.ExportOutput( station.GetOutputPort("iiwa.position_commanded"), "iiwa.position_commanded")
     
     diagram = builder.Build()
     return diagram
@@ -511,14 +512,17 @@ class KukaRecorder(LeafSystem):
         self.diffik_out_port = self.DeclareAbstractInputPort("X_WE_desired", Value(RigidTransform()))
         self.gripper_out_port = self.DeclareVectorInputPort("gripper_command", 1)
         self.gripper_pos_port = self.DeclareVectorInputPort("gripper_state", 2)
+        self.joint_commanded_port = self.DeclareVectorInputPort("iiwa.position_commanded", 7)
         self.DeclarePeriodicPublishEvent(period_sec=1.0/hz, offset_sec=0.0, publish=self.record)
         self.ts = []
         self.joints_list = []
         self.diffik_out = []
         self.gripper_list = []
         self.gripper_pos_list = []
+        self.joints_commanded_list = []
     def record(self, context):
         q = self.q_port.Eval(context)
+        q_commanded = self.joint_commanded_port.Eval(context)
         X_WE_desired = self.diffik_out_port.Eval(context)
         gripper_command = self.gripper_out_port.Eval(context)
         gripper_state = self.gripper_pos_port.Eval(context)
@@ -527,13 +531,15 @@ class KukaRecorder(LeafSystem):
         self.gripper_list.append(gripper_command)
         self.gripper_pos_list.append(gripper_state[0])
         self.ts.append(context.get_time())
+        self.joints_commanded_list.append(q_commanded)
     def save(self):
         np.save(os.path.join(self.save_folder, 'joints.npy'), np.array(self.joints_list))
         np.save(os.path.join(self.save_folder, 'diffik_out.npy'), np.array(self.diffik_out))
         np.save(os.path.join(self.save_folder, 'gripper_out.npy'), np.array(self.gripper_list))
         np.save(os.path.join(self.save_folder, 'ts.npy'), np.array(self.ts))
         np.save(os.path.join(self.save_folder, 'gripper_pos.npy'), np.array(self.gripper_pos_list))
-        
+        np.save(os.path.join(self.save_folder, 'joints_commanded.npy'), np.array(self.joints_commanded_list))
+    
 def record_teleop_diagram(meshcat, save_folder, fps):
     builder = DiagramBuilder()
     teleop = setup_teleop_diagram(meshcat)
@@ -554,6 +560,9 @@ def record_teleop_diagram(meshcat, save_folder, fps):
     )
     builder.Connect(
         teleop_block.GetOutputPort("wsg.state_measured"), kuka_recorder.GetInputPort("gripper_state")
+    )
+    builder.Connect(
+        teleop_block.GetOutputPort("iiwa.position_commanded"), kuka_recorder.GetInputPort("iiwa.position_commanded")
     )
     
     

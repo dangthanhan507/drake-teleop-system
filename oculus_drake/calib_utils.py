@@ -21,7 +21,6 @@ from pydrake.all import (
 from manipulation.scenarios import AddMultibodyTriad
 
 from oculus_drake.realsense.cameras import Cameras
-import apriltag
 import cv2
 from collections import defaultdict
 import pupil_apriltags
