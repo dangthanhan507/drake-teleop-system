@@ -21,7 +21,7 @@ if __name__ == '__main__':
     
     
     builder = DiagramBuilder()
-    cam_calib = CameraCalibrateVisSystem(cameras, Ks, tag_width=0.04, save_data=False)
+    cam_calib = CameraCalibrateVisSystem(cameras, Ks, tag_width=0.04, use_kuka=False)
     builder.AddSystem(cam_calib)
     diagram = builder.Build()
     

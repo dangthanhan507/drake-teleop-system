@@ -15,8 +15,8 @@ def save_extrinsics(json_dict, filename):
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
-    argparser.add_argument("--file", type=str, default="config/calibration_joints.npy")
-    argparser.add_argument('--out_file', type=str, default='config/camera_extrinsics.json')
+    argparser.add_argument("--file", type=str, default="calibration/calibration_joints.npy")
+    argparser.add_argument('--out_file', type=str, default='calibration/camera_extrinsics.json')
     args = argparser.parse_args()
     
     joints = np.load(args.file) #(N, 7)

@@ -58,7 +58,7 @@ if __name__ == '__main__':
             obs = cameras.get_obs(get_color=True, get_depth=True)
             new_pcd = o3d.geometry.PointCloud()
             for i in range(n_cam):
-                color = obs[f'color_{i}'][-1]
+                color = obs[f'color_{i}'][-1][:,:,::-1]
                 depth = obs[f'depth_{i}'][-1]
                 pts3d, ptscolor = depth2pcd(depth, intrinsics_arr[i], rgb=color)
                 
@@ -75,7 +75,7 @@ if __name__ == '__main__':
             global_pcd.points = new_pcd.points
             global_pcd.colors = new_pcd.colors
             
-            global_pcd = global_pcd.voxel_down_sample(voxel_size=0.005)
+            # global_pcd = global_pcd.voxel_down_sample(voxel_size=0.005)
             
             vis.update_geometry(global_pcd)
             vis.poll_events()
