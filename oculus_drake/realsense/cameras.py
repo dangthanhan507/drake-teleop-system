@@ -144,3 +144,16 @@ def load_extrinsics(filename):
     for key in json_dict.keys():
         json_dict[key] = np.array(json_dict[key])
     return json_dict
+def save_intrinsics(Ks, filename):
+    # Ks is array of Ks
+    Ks_dict = dict()
+    for i in range(Ks.shape[0]):
+        Ks_dict[f'cam{i}'] = Ks[i].tolist()
+    with open(filename, 'w') as f:
+        json.dump(Ks_dict, f)
+def load_intrinsics(filename):
+    with open(filename, 'r') as f:
+        Ks_dict = json.load(f)
+    for key in Ks_dict.keys():
+        Ks_dict[key] = np.array(Ks_dict[key])
+    return Ks_dict

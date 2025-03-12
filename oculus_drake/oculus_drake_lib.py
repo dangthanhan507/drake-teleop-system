@@ -324,7 +324,7 @@ def setup_teleop_diagram(meshcat):
     diff_ik_plant = fake_station.GetSubsystemByName("plant")
     xyz_speed_limit = 0.1
     sensor_hz = 70
-    diffik_period = 1e-3
+    diffik_period = 1e-4
     
     differential_ik = AddIiwaDifferentialIK(
         builder,
@@ -376,6 +376,7 @@ def setup_teleop_diagram(meshcat):
     builder.ExportOutput( station.GetOutputPort("iiwa.position_measured"), "iiwa.position_measured" )
     builder.ExportOutput( teleop_sys.GetOutputPort("controller_pose"), "X_WE_desired")
     builder.ExportOutput( teleop_sys.GetOutputPort("gripper_out"), "gripper_out")
+    builder.ExportOutput( station.GetOutputPort("wsg.state_measured"), "wsg.state_measured")
     
     diagram = builder.Build()
     return diagram
@@ -462,7 +463,10 @@ class CameraRecorder(LeafSystem):
         self.process_save.start()
         time.sleep(5.0)
     def end(self):
-        self.process_save.join()
+        _obs_queue = CameraRecorder._obs_queue
+        _obs_queue.put(None)
+        time.sleep(5.0)
+        # self.process_save.join() # for some reason this hangs. apprently a mp.Queue() issue
     def write(self, context):
         _obs_queue = CameraRecorder._obs_queue
         _obs_queue.put(5)
@@ -494,6 +498,9 @@ class CameraRecorder(LeafSystem):
                     cv2.imwrite(f'{save_folder}/camera_{i}/color_{ "{:04d}".format(index) }.png', recent_obs[f'color_{i}'][-1])
                     cv2.imwrite(f'{save_folder}/camera_{i}/depth_{ "{:04d}".format(index) }.png', (recent_obs[f'depth_{i}'][-1]* 1000.0).astype(np.uint16) )
                 index += 1
+        
+        while not _obs_queue.empty():
+            _obs_queue.get()
         print("Thread done!")
 
 class KukaRecorder(LeafSystem):
@@ -503,44 +510,58 @@ class KukaRecorder(LeafSystem):
         self.q_port = self.DeclareVectorInputPort("joints", 7)
         self.diffik_out_port = self.DeclareAbstractInputPort("X_WE_desired", Value(RigidTransform()))
         self.gripper_out_port = self.DeclareVectorInputPort("gripper_command", 1)
+        self.gripper_pos_port = self.DeclareVectorInputPort("gripper_state", 2)
         self.DeclarePeriodicPublishEvent(period_sec=1.0/hz, offset_sec=0.0, publish=self.record)
         self.ts = []
         self.joints_list = []
         self.diffik_out = []
         self.gripper_list = []
+        self.gripper_pos_list = []
     def record(self, context):
         q = self.q_port.Eval(context)
         X_WE_desired = self.diffik_out_port.Eval(context)
         gripper_command = self.gripper_out_port.Eval(context)
+        gripper_state = self.gripper_pos_port.Eval(context)
         self.joints_list.append(q)
         self.diffik_out.append(X_WE_desired.GetAsMatrix4())
         self.gripper_list.append(gripper_command)
+        self.gripper_pos_list.append(gripper_state[0])
+        self.ts.append(context.get_time())
     def save(self):
         np.save(os.path.join(self.save_folder, 'joints.npy'), np.array(self.joints_list))
         np.save(os.path.join(self.save_folder, 'diffik_out.npy'), np.array(self.diffik_out))
         np.save(os.path.join(self.save_folder, 'gripper_out.npy'), np.array(self.gripper_list))
+        np.save(os.path.join(self.save_folder, 'ts.npy'), np.array(self.ts))
+        np.save(os.path.join(self.save_folder, 'gripper_pos.npy'), np.array(self.gripper_pos_list))
         
 def record_teleop_diagram(meshcat, save_folder, fps):
     builder = DiagramBuilder()
-    teleop_diagram = setup_teleop_diagram(meshcat)
-    teleop = builder.AddSystem(teleop_diagram)
+    teleop = setup_teleop_diagram(meshcat)
+    teleop_block = builder.AddSystem(teleop)
     camera_recorder = CameraRecorder(save_folder, fps)
     camera_recorder_block = builder.AddSystem(camera_recorder)
     kuka_recorder   = KukaRecorder(save_folder, fps)
     kuka_recorder_block   = builder.AddSystem(kuka_recorder)
     
     builder.Connect(
-        teleop_diagram.GetOutputPort("iiwa.position_measured"), kuka_recorder.GetInputPort("joints")
+        teleop_block.GetOutputPort("iiwa.position_measured"), kuka_recorder.GetInputPort("joints")
     )
     builder.Connect(
-        teleop_diagram.GetOutputPort("X_WE_desired"), kuka_recorder_block.GetInputPort("X_WE_desired")
+        teleop_block.GetOutputPort("X_WE_desired"), kuka_recorder_block.GetInputPort("X_WE_desired")
     )
     builder.Connect(
-        teleop_diagram.GetOutputPort("gripper_out"), kuka_recorder.GetInputPort("gripper_command")
+        teleop_block.GetOutputPort("gripper_out"), kuka_recorder.GetInputPort("gripper_command")
+    )
+    builder.Connect(
+        teleop_block.GetOutputPort("wsg.state_measured"), kuka_recorder.GetInputPort("gripper_state")
     )
     
     
     diagram = builder.Build()
     
-    _end_record_fn = lambda: (camera_recorder.end(), kuka_recorder.save())
+    def _end_record_fn():
+        kuka_recorder.save()
+        camera_recorder.end()
+        print("Recording done!")
+    
     return diagram, _end_record_fn

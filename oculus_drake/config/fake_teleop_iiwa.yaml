@@ -21,12 +21,6 @@ Demo:
           X_PF:
             base_frame: iiwa::iiwa_link_7
             translation: [0.0, 0.0, 0.035]
-      # - add_frame:
-      #     name: calibration_frame # calibration frame
-      #     X_PF:
-      #       base_frame: iiwa::iiwa_link_7
-      #       rotation: !Rpy { deg: [90.0, 0.0, 90.0]} # apriltag frame relative to kuka frame
-      #       translation: [0.0, 0.0, 0.045] #4.5cm below gamma
 
     # Add schunk_wsg_50
       - add_model:
@@ -48,5 +42,4 @@ Demo:
       hand_model_name: wsg
       control_mode: position_only
     wsg: !SchunkWsgDriver {}
-      
     
