@@ -182,7 +182,7 @@ def AddIiwaDifferentialIK(builder, plant, frame=None, xyz_speed_limit = 0.03, ti
     q0 = plant.GetPositions(plant.CreateDefaultContext())
     params.set_nominal_joint_position(q0)
     # params.set_joint_acceleration_limits()
-    params.set_end_effector_angular_speed_limit(25.0 * np.pi / 180) # 10 deg/s
+    params.set_end_effector_angular_speed_limit(45.0 * np.pi / 180) # 10 deg/s
     params.set_end_effector_translational_velocity_limits(
         [-xyz_speed_limit, -xyz_speed_limit, -xyz_speed_limit], [xyz_speed_limit, xyz_speed_limit, xyz_speed_limit]
     )
