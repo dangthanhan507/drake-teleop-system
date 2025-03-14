@@ -129,7 +129,7 @@ class OculusTeleopSystem(LeafSystem):
         self.oculus = oculus
         
         
-        self.gripper_close = 0.01 # close gripper width
+        self.gripper_close = 0.0 # close gripper width
         self.gripper_open  = 0.1
         self.move_kuka_mode = False
         self.base_pose = None
