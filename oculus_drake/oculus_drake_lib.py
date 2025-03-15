@@ -11,6 +11,8 @@ from pydrake.all import (
     ConstantValueSource,
     PiecewisePolynomial,
     TrajectorySource,
+    PiecewisePose,
+    ConstantVectorSource,
     Simulator
 )
 from manipulation.scenarios import AddMultibodyTriad
@@ -412,8 +414,16 @@ class TeleopSequenceDataset:
     def __len__(self):
         return len(self.ts)
 
+class PoseTrajectorySource(LeafSystem):
+    def __init__(self, piecewise_pose: PiecewisePose):
+        LeafSystem.__init__(self)
+        self.piecewise_pose = piecewise_pose
+        self.DeclareAbstractOutputPort("X_WE_desired", lambda: Value(RigidTransform()), self.CalcOutput)
+    def CalcOutput(self, context, output):
+        time = context.get_time()
+        output.set_value(self.piecewise_pose.GetPose(time))
+
 def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = ReplayType.JOINT_COMMANDS):
-    
     # load data
     data_sequence = TeleopSequenceDataset(datapath)
     
@@ -421,10 +431,8 @@ def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = Repla
     
     scenario = load_scenario(filename=SCENARIO_FILEPATH, scenario_name='Demo')
     station = builder.AddNamedSystem("station", MakeHardwareStationInterface(scenario, meshcat=meshcat))
-    
+    ts = data_sequence.ts
     if replay_type == ReplayType.JOINT_COMMANDS:
-        # ts
-        ts = data_sequence.ts
         qs_commanded = data_sequence.joints_commanded
         traj = PiecewisePolynomial.FirstOrderHold(ts, qs_commanded.T)
         traj_block = builder.AddSystem(TrajectorySource(traj))
@@ -434,17 +442,70 @@ def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = Repla
             station.GetInputPort("iiwa.position")
         )
         
-        gripper_commanded = data_sequence.commanded_gripper_pos
-        assert np.all(gripper_commanded >= 0.0), f"Gripper command must be positive semi-definite.\n {gripper_commanded}"
-        traj_gripper = PiecewisePolynomial.FirstOrderHold(ts, gripper_commanded.T)
-        traj_gripper_block = builder.AddSystem(TrajectorySource(traj_gripper))
+        commanded_pose = data_sequence.diffik_commanded_pose
+    elif replay_type == ReplayType.EE_POSE_COMMANDS:
+        commanded_pose = data_sequence.diffik_commanded_pose
+        
+        fake_scenario = load_scenario(filename=FAKE_SCENARIO_FILEPATH, scenario_name='Demo')
+        fake_station = MakeFakeStation(fake_scenario)
+        diff_ik_plant = fake_station.GetSubsystemByName("plant")
+        xyz_speed_limit = 0.1
+        diffik_period = 1e-4
+        
+        differential_ik = AddIiwaDifferentialIK(
+            builder,
+            diff_ik_plant,
+            diff_ik_plant.GetFrameByName("grasp_frame"),
+            xyz_speed_limit=xyz_speed_limit,
+            time_step=diffik_period
+        )
+        seq_rigid_transform = [RigidTransform(commanded_pose[i]) for i in range(len(commanded_pose))]
+        X_WE_traj = PiecewisePose.MakeLinear(data_sequence.ts, seq_rigid_transform)
+        X_WE_traj_block = builder.AddSystem(PoseTrajectorySource(X_WE_traj))
         
         builder.Connect(
-            traj_gripper_block.get_output_port(),
-            station.GetInputPort("wsg.position")
+            X_WE_traj_block.get_output_port(),
+            differential_ik.GetInputPort("X_WE_desired")
         )
+        
+        # don't use robot state
+        use_state = builder.AddSystem(ConstantValueSource(Value(False)))
+        builder.Connect(
+            use_state.get_output_port(),
+            differential_ik.GetInputPort("use_robot_state"),
+        )
+        iiwa_state = builder.AddSystem(Multiplexer([7,7]))
+        builder.Connect(
+            station.GetOutputPort("iiwa.position_measured"),
+            iiwa_state.get_input_port(0)
+        )
+        builder.Connect(
+            station.GetOutputPort("iiwa.velocity_estimated"),
+            iiwa_state.get_input_port(1)
+        )
+        builder.Connect(
+            iiwa_state.get_output_port(),
+            differential_ik.GetInputPort("robot_state"),
+        )
+        
+        builder.Connect(
+            differential_ik.get_output_port(),
+            station.GetInputPort("iiwa.position"),
+        )
+        
     else:
         raise NotImplementedError("Only joint commands are supported for now.")
+    
+    # connect gripper
+    gripper_commanded = data_sequence.commanded_gripper_pos
+    assert np.all(gripper_commanded >= 0.0), f"Gripper command must be strictly non-negative.\n {gripper_commanded}"
+    traj_gripper = PiecewisePolynomial.FirstOrderHold(ts, gripper_commanded.T)
+    traj_gripper_block = builder.AddSystem(TrajectorySource(traj_gripper))
+    
+    builder.Connect(
+        traj_gripper_block.get_output_port(),
+        station.GetInputPort("wsg.position")
+    )
     
     diagram = builder.Build()
     end_time = data_sequence.ts[-1]
