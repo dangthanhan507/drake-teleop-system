@@ -13,10 +13,10 @@ from pydrake.all import (
     TrajectorySource,
     PiecewisePose,
     ConstantVectorSource,
-    Simulator
+    Simulator,
 )
 from manipulation.scenarios import AddMultibodyTriad
-from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
+from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation, DiffIKSystem, DiffIKParams
 from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH, CALIB_SCENARIO_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
 from oculus_reader.reader import OculusReader
@@ -390,8 +390,10 @@ class ReplayType(Enum):
     EE_POSE_COMMANDS     = 1
     EE_VELOCITY_COMMANDS = 2
 
+# I messed up and didn't record diffik velocity, but it's calculated implicitly by DiffIK anyways.
+# I'll just offload the computation to the TeleopSequenceDataset
 class TeleopSequenceDataset:
-    def __init__(self, dataset_dir: str):
+    def __init__(self, dataset_dir: str, get_V_WE = False):
         self.dataset_dir = dataset_dir
         
         self.joints = np.load(os.path.join(self.dataset_dir, 'joints.npy')) # (N, 7)
@@ -400,6 +402,24 @@ class TeleopSequenceDataset:
         self.gripper_pos = np.load(os.path.join(self.dataset_dir, 'gripper_pos.npy')) # (N, 1)
         self.diffik_commanded_pose = np.load(os.path.join(self.dataset_dir, 'diffik_out.npy')) # (N, 4, 4)
         self.ts = np.load(os.path.join(self.dataset_dir, 'ts.npy')) # (N,)
+        
+        if get_V_WE:
+            self.V_WEs = np.zeros((len(self), 6))
+            fake_scenario = load_scenario(filename=FAKE_SCENARIO_FILEPATH, scenario_name='Demo')
+            fake_station = MakeFakeStation(fake_scenario)
+            fake_plant = fake_station.GetSubsystemByName("plant")
+            fake_plant_context = fake_plant.CreateDefaultContext()
+            for i in range(len(self)):
+                X_WE_des_i = RigidTransform(self.diffik_commanded_pose[i])
+                
+                fake_plant.SetPositions(fake_plant_context, fake_plant.GetModelInstanceByName("iiwa"), self.joints_commanded[i])
+                X_WE_curr  = fake_plant.GetFrameByName("grasp_frame").CalcPoseInWorld(fake_plant_context)
+                
+                diff_translation = (X_WE_des_i.translation() - X_WE_curr.translation())
+                diff_rotation    = (X_WE_des_i.rotation() @ X_WE_curr.rotation().transpose()).ToAngleAxis()
+                diff_rotation = diff_rotation.axis() * diff_rotation.angle()
+                V_WE = np.concatenate([diff_rotation, diff_translation])
+                self.V_WEs[i] = V_WE
         
     def __getitem__(self, index):
         data = {
@@ -425,7 +445,7 @@ class PoseTrajectorySource(LeafSystem):
 
 def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = ReplayType.JOINT_COMMANDS):
     # load data
-    data_sequence = TeleopSequenceDataset(datapath)
+    data_sequence = TeleopSequenceDataset(datapath, get_V_WE=True)
     
     builder = DiagramBuilder()
     
@@ -488,6 +508,42 @@ def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = Repla
             differential_ik.GetInputPort("robot_state"),
         )
         
+        builder.Connect(
+            differential_ik.get_output_port(),
+            station.GetInputPort("iiwa.position"),
+        )
+    elif ReplayType.EE_VELOCITY_COMMANDS:
+        V_WEs = data_sequence.V_WEs
+        
+        fake_scenario = load_scenario(filename=FAKE_SCENARIO_FILEPATH, scenario_name='Demo')
+        fake_station = MakeFakeStation(fake_scenario)
+        diff_ik_plant = fake_station.GetSubsystemByName("plant")
+        
+        xyz_speed_limit = 0.1
+        diffik_period = 1e-4
+        traj_V_WE = PiecewisePolynomial.FirstOrderHold(ts, V_WEs.T)
+        traj_V_WE_block = builder.AddSystem(TrajectorySource(traj_V_WE))
+        
+        diffik_params = DiffIKParams(diff_ik_plant, xyz_speed_limit=xyz_speed_limit, time_step=diffik_period)
+        differential_ik  = builder.AddSystem(DiffIKSystem(diff_ik_plant, diff_ik_plant.GetFrameByName("grasp_frame"), diffik_params, time_step=diffik_period))
+        
+        iiwa_state = builder.AddSystem(Multiplexer([7,7]))
+        builder.Connect(
+            station.GetOutputPort("iiwa.position_measured"),
+            iiwa_state.get_input_port(0)
+        )
+        builder.Connect(
+            station.GetOutputPort("iiwa.velocity_estimated"),
+            iiwa_state.get_input_port(1)
+        )
+        builder.Connect(
+            iiwa_state.get_output_port(),
+            differential_ik.GetInputPort("robot_state"),
+        )
+        builder.Connect(
+            traj_V_WE_block.get_output_port(),
+            differential_ik.GetInputPort("V_WE")
+        )
         builder.Connect(
             differential_ik.get_output_port(),
             station.GetInputPort("iiwa.position"),

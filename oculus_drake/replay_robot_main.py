@@ -19,7 +19,7 @@ if __name__ == '__main__':
     
     input("Press Enter to start replay!")
     meshcat = StartMeshcat()
-    replay_diagram, end_time = setup_replay_diagram(meshcat, args.save_file, ReplayType.EE_POSE_COMMANDS)
+    replay_diagram, end_time = setup_replay_diagram(meshcat, args.save_file, ReplayType.EE_VELOCITY_COMMANDS)
     simulator = Simulator(replay_diagram)
     simulator_context = simulator.get_mutable_context()
     simulator.set_target_realtime_rate(1.0)

@@ -20,7 +20,10 @@ from pydrake.all import (
     RigidTransform,
     AddDefaultVisualization,
     DifferentialInverseKinematicsIntegrator,
-    DifferentialInverseKinematicsParameters
+    DifferentialInverseKinematicsParameters,
+    DifferentialInverseKinematicsStatus,
+    DoDifferentialInverseKinematics,
+    EventStatus
 )
 from pydrake.all import AddDefaultVisualization
 import numpy as np
@@ -175,6 +178,26 @@ class MultibodyPositionToBodyPose(LeafSystem):
         pose = self.plant.EvalBodyPoseInWorld(self.plant_context, self.body)
         output.get_mutable_value().set(pose.rotation(), pose.translation())
 
+def DiffIKParams(plant, xyz_speed_limit = 0.03, time_step=1e-4):
+    params = DifferentialInverseKinematicsParameters(
+        plant.num_positions(), plant.num_velocities()
+    )
+    q0 = plant.GetPositions(plant.CreateDefaultContext())
+    params.set_nominal_joint_position(q0)
+    # params.set_joint_acceleration_limits()
+    params.set_end_effector_angular_speed_limit(20.0 * np.pi / 180) # 20 deg/s
+    params.set_end_effector_translational_velocity_limits(
+        [-xyz_speed_limit, -xyz_speed_limit, -xyz_speed_limit], [xyz_speed_limit, xyz_speed_limit, xyz_speed_limit]
+    )
+    
+    iiwa14_velocity_limits = np.array([1.4, 1.4, 1.7, 1.3, 2.2, 2.3, 2.3])
+    params.set_joint_velocity_limits(
+        (-iiwa14_velocity_limits, iiwa14_velocity_limits)
+    )
+    params.set_joint_centering_gain(0 * np.eye(7)) # no nullspace crap
+    params.set_time_step(time_step)
+    return params
+
 def AddIiwaDifferentialIK(builder, plant, frame=None, xyz_speed_limit = 0.03, time_step=1e-4):
     params = DifferentialInverseKinematicsParameters(
         plant.num_positions(), plant.num_velocities()
@@ -205,3 +228,62 @@ def AddIiwaDifferentialIK(builder, plant, frame=None, xyz_speed_limit = 0.03, ti
         )
     )
     return differential_ik
+
+class DiffIKSystem(LeafSystem):
+    def __init__(self, plant, frame_E, parameters: DifferentialInverseKinematicsParameters, time_step=1e-4):
+        LeafSystem.__init__(self)
+        self._diff_ik_params = parameters
+        self._frame_E = frame_E
+        self._plant = plant
+        self._plant_context = plant.CreateDefaultContext()
+        
+        self.V_WE_port = self.DeclareVectorInputPort("V_WE", 6)
+        self.robot_state_port = self.DeclareVectorInputPort("robot_state", plant.num_multibody_states())
+        self.DeclareInitializationDiscreteUpdateEvent(self.Initialize)
+        
+        self.out_port = self.DeclareVectorOutputPort(
+            "iiwa.position", plant.num_positions(), self.OutputJointPosition
+        )
+        self.out_port.disable_caching_by_default()
+        self._time_step = time_step
+        self.DeclareDiscreteState(plant.num_positions())
+        self.DeclarePeriodicDiscreteUpdateEvent(self._time_step, 0, self.Integrate)
+        
+    def Initialize(self, context, discrete_state):
+        discrete_state.set_value(
+            0,
+            self.robot_state_port.Eval(context)[:self._plant.num_positions()]
+        )
+    def Integrate(self, context, discrete_state):
+        V_WE = np.copy(self.V_WE_port.Eval(context) / self._time_step)
+        # preprocess V_WE
+        if np.linalg.norm(V_WE[:3]) > self._diff_ik_params.get_end_effector_angular_speed_limit():
+            V_WE[:3] = V_WE[:3] / np.linalg.norm(V_WE[:3])
+            V_WE[:3] = V_WE[:3] * self._diff_ik_params.get_end_effector_angular_speed_limit()
+        
+        lower_vel_limit, upper_vel_limit = self._diff_ik_params.get_end_effector_translational_velocity_limits()
+        lower_vel_limit = np.array(lower_vel_limit)
+        upper_vel_limit = np.array(upper_vel_limit)
+        V_WE[3:] = np.clip(V_WE[3:], lower_vel_limit, upper_vel_limit)
+        
+        
+        assert np.all(V_WE[3:] >= lower_vel_limit) and np.all(V_WE[3:] <= upper_vel_limit)
+        assert np.linalg.norm(V_WE[:3]) <= self._diff_ik_params.get_end_effector_angular_speed_limit() + 1e-3
+        
+        q = np.copy(context.get_discrete_state(0).get_value())
+        self._plant.SetPositions(self._plant_context, q)
+        result = DoDifferentialInverseKinematics(
+            self._plant,
+            self._plant_context,
+            V_WE,
+            self._frame_E,
+            self._diff_ik_params
+        )
+        if result.status != DifferentialInverseKinematicsStatus.kNoSolutionFound:
+            discrete_state.set_value(0, q + self._time_step * result.joint_velocities)
+        else:
+            discrete_state.set_value(0, q)
+        return EventStatus.Succeeded()
+    
+    def OutputJointPosition(self, context, output):
+        output.set_value(context.get_discrete_state(0).get_value())
