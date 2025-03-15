@@ -18,6 +18,7 @@ from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeSta
 from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH, CALIB_SCENARIO_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
 from oculus_reader.reader import OculusReader
+from enum import Enum
 import numpy as np
 import time
 
@@ -381,6 +382,73 @@ def setup_teleop_diagram(meshcat):
     
     diagram = builder.Build()
     return diagram
+
+class ReplayType(Enum):
+    JOINT_COMMANDS       = 0
+    EE_POSE_COMMANDS     = 1
+    EE_VELOCITY_COMMANDS = 2
+
+class TeleopSequenceDataset:
+    def __init__(self, dataset_dir: str):
+        self.dataset_dir = dataset_dir
+        
+        self.joints = np.load(os.path.join(self.dataset_dir, 'joints.npy')) # (N, 7)
+        self.joints_commanded = np.load(os.path.join(self.dataset_dir, 'joints_commanded.npy')) # (N, 7)
+        self.commanded_gripper_pos = np.load(os.path.join(self.dataset_dir, 'gripper_out.npy')) # (N, 1)
+        self.gripper_pos = np.load(os.path.join(self.dataset_dir, 'gripper_pos.npy')) # (N, 1)
+        self.diffik_commanded_pose = np.load(os.path.join(self.dataset_dir, 'diffik_out.npy')) # (N, 4, 4)
+        self.ts = np.load(os.path.join(self.dataset_dir, 'ts.npy')) # (N,)
+        
+    def __getitem__(self, index):
+        data = {
+            "q": self.joints[index],
+            "q_command": self.joints_commanded[index],
+            "g_command": self.commanded_gripper_pos[index],
+            "g": self.gripper_pos[index],
+            "X_WE_command": self.diffik_commanded_pose[index],
+            "t": self.ts[index]
+        }
+        return data
+    def __len__(self):
+        return len(self.ts)
+
+def setup_replay_diagram(meshcat, datapath: str, replay_type: ReplayType = ReplayType.JOINT_COMMANDS):
+    
+    # load data
+    data_sequence = TeleopSequenceDataset(datapath)
+    
+    builder = DiagramBuilder()
+    
+    scenario = load_scenario(filename=SCENARIO_FILEPATH, scenario_name='Demo')
+    station = builder.AddNamedSystem("station", MakeHardwareStationInterface(scenario, meshcat=meshcat))
+    
+    if replay_type == ReplayType.JOINT_COMMANDS:
+        # ts
+        ts = data_sequence.ts
+        qs_commanded = data_sequence.joints_commanded
+        traj = PiecewisePolynomial.FirstOrderHold(ts, qs_commanded.T)
+        traj_block = builder.AddSystem(TrajectorySource(traj))
+        
+        builder.Connect(
+            traj_block.get_output_port(),
+            station.GetInputPort("iiwa.position")
+        )
+        
+        gripper_commanded = data_sequence.commanded_gripper_pos
+        assert np.all(gripper_commanded >= 0.0), f"Gripper command must be positive semi-definite.\n {gripper_commanded}"
+        traj_gripper = PiecewisePolynomial.FirstOrderHold(ts, gripper_commanded.T)
+        traj_gripper_block = builder.AddSystem(TrajectorySource(traj_gripper))
+        
+        builder.Connect(
+            traj_gripper_block.get_output_port(),
+            station.GetInputPort("wsg.position")
+        )
+    else:
+        raise NotImplementedError("Only joint commands are supported for now.")
+    
+    diagram = builder.Build()
+    end_time = data_sequence.ts[-1]
+    return diagram, end_time
 
 def set_kuka_joints(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_time = 2.0, use_mp = False):
     def set_kuka_joints_fn(goal_q: np.ndarray, endtime = 10.0, joint_speed = None, pad_time = 2.0):
