@@ -69,7 +69,7 @@ if __name__ == '__main__':
             pts2d[j, :] = pt2d
             pts3d[j, :] = pt3d
         K = Ks[i]
-        ret, rvec, tvec = cv2.solvePnP(pts3d, pts2d, K, distCoeffs=np.zeros(5))
+        ret, rvec, tvec = cv2.solvePnP(pts3d, pts2d, K, distCoeffs=np.zeros(5)) # get kuka2cam pts3d is in kuka frame
         
         rotm = cv2.Rodrigues(rvec)[0]
         H = np.eye(4)

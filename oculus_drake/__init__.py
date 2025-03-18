@@ -8,3 +8,4 @@ CALIB_SCENARIO_FILEPATH = f'{os.path.dirname(__file__)}/config/calib_iiwa.yaml'
 FAKE_CALIB_SCENARIO_FILEPATH = f'{os.path.dirname(__file__)}/config/fake_calib_iiwa.yaml'
 
 CALIBRATION_PATH = f'{os.path.dirname(__file__)}/calibration'
+CALIBRATION_MARKER_LENGTH = 0.033

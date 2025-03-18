@@ -21,3 +21,5 @@ gdown 1HR3O-rMv9qJoTrG6GNxi-4ZVREQzZ1Rf
 
 python3 -m pip install drake underactuated manipulation==2023.11.8
 python3 -m pip install numpy==1.26.4
+# python3 -m pip install multical # calibration library https://github.com/oliver-batchelor/multical/tree/master
+# python3 -m pip install multical[interactive]
