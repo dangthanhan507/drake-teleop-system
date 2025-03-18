@@ -9,3 +9,7 @@ FAKE_CALIB_SCENARIO_FILEPATH = f'{os.path.dirname(__file__)}/config/fake_calib_i
 
 CALIBRATION_PATH = f'{os.path.dirname(__file__)}/calibration'
 CALIBRATION_MARKER_LENGTH = 0.033
+
+REPO_DIR = f'{os.path.dirname(__file__)}/../'
+WEIGHT_DIR = os.path.join(REPO_DIR, 'weights')
+THIRD_PARTY_DIR = os.path.join(REPO_DIR, 'third-party')

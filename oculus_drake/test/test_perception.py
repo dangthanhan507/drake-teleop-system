@@ -49,48 +49,57 @@ if __name__ == '__main__':
         enable_color=True,
         enable_depth=True,
         process_depth=True,
-        extrinsic_path='calibration/camera_extrinsics.json'
     )
     cameras.start(exposure_time=10)
     
     obs = cameras.get_obs(get_depth=True, get_color=True)
-    color0 = obs['color_0'][-1] # RGB
-    depth0 = obs['depth_0'][-1]
-    
-    H,W,_ = color0.shape
-    
+    det_displays = []
+    mask_displays = []
     perception = Perception3DModule()
-    
-    # test detection module
-    # text_prompts = ['box', 'table']
-    text_prompts = ['bottle']
-    boxes,scores,labels = perception.detect(color0, captions=text_prompts, box_thresholds=0.4)
-    boxes_np = boxes.detach().cpu().numpy()
-    boxes_np = boxes_np * np.array([[W, H, W, H]])
-    
-    # visualize bounding box
-    det_display = color0.copy()
-    for i in range(boxes_np.shape[0]):
-        label = 'bottle'
-        det_display = visualize_bbox(det_display, boxes_np[i], label)
-    cv2.imshow('detection', det_display)
+    for i in range(3):
+        color = obs[f'color_{i}'][-1] # RGB
+        depth = obs[f'depth_{i}'][-1]
+        
+        H,W,_ = color.shape
+        
+        
+        
+        # test detection module
+        # text_prompts = ['box', 'table']
+        text_prompts = ['red mug']
+        boxes,scores,labels = perception.detect(color, captions=text_prompts, box_thresholds=0.5)
+        boxes_np = boxes.detach().cpu().numpy()
+        boxes_np = boxes_np * np.array([[W, H, W, H]])
+        
+        # visualize bounding box
+        det_display = color.copy()
+        for i in range(boxes_np.shape[0]):
+            label = 'bottle'
+            det_display = visualize_bbox(det_display, boxes_np[i], label)
+        # cv2.imshow('detection', det_display)
+        # cv2.waitKey(0)
+        det_displays.append(det_display)
+        
+        # test segmentation module
+        boxes = boxes * torch.Tensor([[W, H, W, H]]).to(device=perception.device, dtype=boxes.dtype)
+        boxes[:,:2] -= boxes[:,2:] / 2
+        boxes[:, 2:] += boxes[:,:2] #NOTE: now boxes are in format [x0,y0,x1,y1]
+        (masks, _, text_labels), _ = perception.segment(color, boxes, scores, labels, text_prompts)
+        masks = masks.detach().cpu().numpy()
+        
+        # import matplotlib.pyplot as plt
+        # plt.imshow(masks[0])
+        # plt.show()
+        
+        mask_display = visualize_masks(color.copy(), masks)
+        mask_displays.append(mask_display)
+        # cv2.imshow('mask', mask_display)
+        # cv2.waitKey(0)
+    mask_display_total = np.hstack(mask_displays)
+    det_display_total = np.hstack(det_displays)
+    cv2.imshow('mask', mask_display_total)
+    cv2.imshow('detection', det_display_total)
     cv2.waitKey(0)
-    
-    # test segmentation module
-    boxes = boxes * torch.Tensor([[W, H, W, H]]).to(device=perception.device, dtype=boxes.dtype)
-    boxes[:,:2] -= boxes[:,2:] / 2
-    boxes[:, 2:] += boxes[:,:2] #NOTE: now boxes are in format [x0,y0,x1,y1]
-    (masks, _, text_labels), _ = perception.segment(color0, boxes, scores, labels, text_prompts)
-    masks = masks.detach().cpu().numpy()
-    
-    # import matplotlib.pyplot as plt
-    # plt.imshow(masks[0])
-    # plt.show()
-    
-    mask_display = visualize_masks(color0.copy(), masks)
-    cv2.imshow('mask', mask_display)
-    cv2.waitKey(0)
-    
     cv2.destroyAllWindows()
     
     print("Done")

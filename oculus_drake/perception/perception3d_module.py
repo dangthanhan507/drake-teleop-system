@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import open3d as o3d
 from PIL import Image
-from oculus_drake.realsense.cameras import Cameras, depth2pcd
+from oculus_drake.realsense.cameras import depth2pcd
 # from real_world.utils.pcd_utils import visualize_o3d, depth2fgpcd
 
 from segment_anything import SamPredictor, sam_model_registry
@@ -13,9 +13,11 @@ from groundingdino.models import build_model as dino_build_model
 from groundingdino.util import box_ops
 from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
+from oculus_drake import WEIGHT_DIR, THIRD_PARTY_DIR
+import os
 #NOTE: purpose of this module is to get point clouds of desired object from all cameras
 
-def outlier_rejection(pcd):
+def outlier_rejection_o3d(pcd):
     outliers = None
     new_outlier = None
     rm_iter = 0
@@ -32,11 +34,21 @@ def outlier_rejection(pcd):
         pcd = new_pcd
         rm_iter += 1
     return pcd
+def outlier_rejection(pts3d, ptsrgb):
+    # do some open3d point cloud processing
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts3d)
+    pcd.colors = o3d.utility.Vector3dVector(ptsrgb / 255)
+    pcd = pcd.voxel_down_sample(voxel_size=0.005)
+    pcd = outlier_rejection_o3d(pcd)
+
+    pts3d = np.asarray(pcd.points)
+    ptsrgb = np.asarray(pcd.colors) * 255
+    return pts3d, ptsrgb
 
 class Perception3DModule:
-    def __init__(self, vis_path = "", workspace_bbox = None, device='cuda:0'):
+    def __init__(self, workspace_bbox = None, device='cuda:0'):
         self.device = device
-        self.vis_path = vis_path
         
         #NOTE: bbox follows min-max format [[min_x, max_x], [min_y, max_y], [min_z, max_z]]
         self.workspace_bbox = workspace_bbox
@@ -45,18 +57,18 @@ class Perception3DModule:
         # Load Grounding DINO model for detection
         det_model = dino_build_model(
             SLConfig.fromfile(
-                '../third-party/GroundingDINO/groundingdino/config/GroundingDINO_SwinB_cfg.py'
+                os.path.join(THIRD_PARTY_DIR, 'GroundingDINO', 'groundingdino', 'config', 'GroundingDINO_SwinB_cfg.py')
             )
         )
         chkpt = torch.load(
-            '../weights/groundingdino_swinb_cogcoor.pth', map_location='cpu'
+            os.path.join(WEIGHT_DIR, 'groundingdino_swinb_cogcoor.pth'), map_location=device
         )
         det_model.load_state_dict(clean_state_dict(chkpt['model']), strict=False)
         det_model.eval()
         det_model = det_model.to(self.device) # load on proper device
         
         # Load SAM model for segmentation
-        sam = sam_model_registry['default'](checkpoint='../weights/sam_vit_h_4b8939.pth')
+        sam = sam_model_registry['default'](checkpoint=os.path.join(WEIGHT_DIR, 'sam_vit_h_4b8939.pth'))
         sam_model = SamPredictor(sam)
         sam_model.model = sam_model.model.to(self.device)
         
@@ -149,93 +161,62 @@ class Perception3DModule:
             aggr_mask[masks[obj_i]] = obj_i + 1
         
         return (masks, aggr_mask, text_labels), (boxes, scores, labels)
-    
-    def camera_improc_fn(self, image, depth, intrinsic, extrinsic, additional_obj_names = ['object']):
-        #NOTE: get relevant point clouds for object through image processing (aka deep learning)
-        # text_prompts = ['table'] + additional_obj_names
-        text_prompts = additional_obj_names
-        
-        H,W,_ = image.shape
-        K = intrinsic
-        H_cam2world = np.linalg.inv(extrinsic)
-        R_cam2world = H_cam2world[:3,:3]
-        t_cam2world = H_cam2world[:3,3]
-        
-        pts3d,ptsrgb = depth2pcd(depth, K, rgb=image[:,:,::-1])
-        im = image.copy()
-        
-        mask = ((depth > 0) & (depth < 2.0))
-        
-        # detect and segment
-        boxes, scores, labels = self.detect(im, text_prompts, box_thresholds=0.3) #NOTE: boxes are in format [x0,y0,w,h]
+  
+    def get_mask_fn(self, im, text_prompts= ['object']):
+        H,W,_ = im.shape
+        boxes,scores,labels = self.detect(im, captions=text_prompts, box_thresholds=0.3)
         boxes = boxes * torch.Tensor([[W, H, W, H]]).to(device=self.device, dtype=boxes.dtype)
         boxes[:,:2] -= boxes[:,2:] / 2
         boxes[:, 2:] += boxes[:,:2] #NOTE: now boxes are in format [x0,y0,x1,y1]
-        
         (masks, _, text_labels), _ = self.segment(im, boxes, scores, labels, text_prompts)
-        masks = masks.detach().cpu().numpy()
+        return masks[0].cpu().numpy()
+    def pix2pts(self, im, depth, mask, K, E):
+        H,W,_ = im.shape
         
-        # mask_table = np.zeros(masks[0].shape, dtype=bool)
-        # not_mask_table = np.zeros(masks[0].shape, dtype=bool)
-        # mask_objs  = np.zeros(masks[0].shape, dtype=bool)
-        # for obj_i in range(masks.shape[0]):
-        #     if text_labels[obj_i] == 'table':
-        #         mask_table = mask_table | masks[obj_i]
-        #     else:
-        #         not_mask_table = not_mask_table | masks[obj_i]
-        #         mask_objs = mask_objs | masks[obj_i]
-        # mask_table = mask_table & (~not_mask_table)
-        # mask_obj_and_background = (~mask_table)
-        # take segmentation mask and ensure it is within obj and background only
-        # mask = mask & mask_obj_and_background
+        xx,yy = np.meshgrid(range(W), range(H))
+        oneone = np.ones_like(xx)
+        pix_mesh = np.stack([xx,yy,oneone], axis=-1)
         
-        mask_objs = np.zeros(masks[0].shape, dtype=bool)
-        for obj_i in range(masks.shape[0]):
-            if text_labels[obj_i] != 'table':
-                mask_objs = mask_objs | masks[obj_i]
-        mask = mask & mask_objs
+        depth_masked = depth * mask
+        pts3d_camframe = np.einsum('...ij,...j->...i', (np.linalg.inv(K)), (depth_masked[:,:,np.newaxis] * pix_mesh))
+        campose = np.linalg.inv(E)
+        R, t  = campose[:3,:3], campose[:3,3]
+        pts3d = np.einsum('...ij,...j->...i', R, pts3d_camframe) + t
+        ptsrgb = im * mask[:, :, np.newaxis]
         
-        
-        mask = mask.flatten()
-        
-        pts3d = pts3d[mask,:]
-        ptsrgb = ptsrgb[mask,:]
-        if len(pts3d.shape) == 1:
-            pts3d = pts3d.reshape(-1,3)
-            ptsrgb = ptsrgb.reshape(-1,3)
-        
-        pts3d = (R_cam2world @ pts3d.T).T + t_cam2world
-        
-        if self.workspace_bbox is not None:
-            bbox_mask = (pts3d[:,0] > self.workspace_bbox[0][0]) & (pts3d[:,0] < self.workspace_bbox[0][1])
-            bbox_mask = bbox_mask & (pts3d[:,1] > self.workspace_bbox[1][0]) & (pts3d[:,1] < self.workspace_bbox[1][1])
-            bbox_mask = bbox_mask & (pts3d[:,2] > self.workspace_bbox[2][0]) & (pts3d[:,2] < self.workspace_bbox[2][1])
-            pts3d = pts3d[bbox_mask, :]
-            ptsrgb = ptsrgb[bbox_mask, :]
-        
-        # do some open3d point cloud processing
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pts3d)
-        pcd.colors = o3d.utility.Vector3dVector(ptsrgb / 255)
-        pcd = pcd.voxel_down_sample(voxel_size=0.005)
-        pcd = outlier_rejection(pcd)
-        
-        pts3d = np.asarray(pcd.points)
-        ptsrgb = np.asarray(pcd.colors) * 255
-            
+        pts3d = pts3d.reshape(-1, 3)[mask.reshape(-1), :]
+        ptsrgb = ptsrgb.reshape(-1, 3)[mask.reshape(-1), :]
         return pts3d, ptsrgb
-    def get_pcd(self, cameras: Cameras, object_names=['object']):
-        intrinsics = cameras.get_intrinsics()
-        extrinsics = cameras.get_extrinsics()
-        obs = cameras.get_obs(get_depth=True, get_color=True)
-        
-        colors = [ obs[f'color_{i}'][-1] for i in range(cameras.n_fixed_cameras) ]
-        depths = [ obs[f'depth_{i}'][-1] for i in range(cameras.n_fixed_cameras) ]
+
+    def improc_fn(self, color, depth, intrinsic, extrinsic, obj_names=['object']):
+        mask = self.get_mask_fn(color, obj_names)
+        pts3d, ptsrgb = self.pix2pts(color, depth, mask, intrinsic, extrinsic)
+        return pts3d, ptsrgb
+    def get_pcd(self, colors, depths, intrinsics, extrinsics, object_names=['object']):
+        n_fixed_cameras = len(colors)
+        # n_fixed_cameras = 3
         
         pts3d = []
         ptsrgb = []
-        for i in range(cameras.n_fixed_cameras):
-            pts3d_i, ptsrgb_i = self.camera_improc_fn(colors[i], depths[i], intrinsics[i], extrinsics[i], additional_obj_names=object_names)
+        for i in range(n_fixed_cameras):
+            pts3d_i, ptsrgb_i = self.improc_fn(colors[i], depths[i], intrinsics[i], extrinsics[i], obj_names=object_names)
+            pts3d.append(pts3d_i)
+            ptsrgb.append(ptsrgb_i)
+            print(pts3d_i.shape)
+        pts3d = np.concatenate(pts3d, axis=0)
+        ptsrgb = np.concatenate(ptsrgb, axis=0)
+        
+        pts3d, ptsrgb = outlier_rejection(pts3d, ptsrgb)
+        
+        return pts3d, ptsrgb
+    def get_scene_pcd(self, colors, depths, intrinsics, extrinsics):
+        n_fixed_cameras = len(colors)
+        
+        pts3d = []
+        ptsrgb = []
+        for i in range(n_fixed_cameras):
+            mask = np.ones_like(depths[i], dtype=bool)
+            pts3d_i, ptsrgb_i = self.pix2pts(colors[i], depths[i], mask, intrinsics[i], extrinsics[i])
             pts3d.append(pts3d_i)
             ptsrgb.append(ptsrgb_i)
         pts3d = np.concatenate(pts3d, axis=0)
