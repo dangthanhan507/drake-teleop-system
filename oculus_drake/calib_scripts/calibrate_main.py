@@ -39,8 +39,14 @@ if __name__ == '__main__':
         cam_paths[f'cam{i}'] = os.path.join(args.data_folder, f'cam{i}')
     
     num_frames = len(os.listdir(cam_paths['cam0']))
+    objpoints2kuka_cam_dict = {}
+    imgpoints_dict = {}
+    for camera_idx in range(num_cameras):
+        if camera_idx != kuka_cam_id:
+            objpoints2kuka_cam_dict[f'cam{camera_idx}'] = []
+            imgpoints_dict[f'cam{camera_idx}'] = []
+    
     for frame_idx in range(num_frames):
-        
         camera_idx = kuka_cam_id
         img = cv2.imread(os.path.join(cam_paths[f'cam{camera_idx}'], f'{frame_idx:04d}.png'))
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -52,12 +58,7 @@ if __name__ == '__main__':
         board2kuka_cam[:3,:3] = Rot
         board2kuka_cam[:3,3] = t
         
-        objpoints2kuka_cam_dict = {}
-        imgpoints_dict = {}
-        for camera_idx in range(num_cameras):
-            if camera_idx != kuka_cam_id:
-                objpoints2kuka_cam_dict[f'cam{camera_idx}'] = []
-                imgpoints_dict[f'cam{camera_idx}'] = []
+
         for camera_idx in range(num_cameras):
             if camera_idx != kuka_cam_id:
                 img = cv2.imread(os.path.join(cam_paths[f'cam{camera_idx}'], f'{frame_idx:04d}.png'))
@@ -77,26 +78,26 @@ if __name__ == '__main__':
                 objpoints2kuka_cam_dict[f'cam{camera_idx}'].append(objpoints2kuka_cam)
                 imgpoints_dict[f'cam{camera_idx}'].append(im_points)
                 
-        # calibrate each camera
-        extrinsics_dict = {'base_cam_id': kuka_cam_id}
-        for camera_idx in range(num_cameras):
-            if camera_idx == kuka_cam_id:
-                kuka_cam2cam = np.eye(4)
-            else:
-                pts2d = np.concatenate(imgpoints_dict[f'cam{camera_idx}'], axis=0) # pix in camera_i
-                pts3d = np.concatenate(objpoints2kuka_cam_dict[f'cam{camera_idx}'], axis=0) # pts3d in kuka_cam frame
-                K = intrinsics_dict[f'cam{camera_idx}']
-                ret, rvec, tvec = cv2.solvePnP(pts3d, pts2d, K, distCoeffs=np.zeros(5)) # get camera_i to kuka_cam
-                rotm = cv2.Rodrigues(rvec)[0]
-                kuka_cam2cam = np.eye(4)
-                kuka_cam2cam[:3, :3] = rotm
-                kuka_cam2cam[:3, 3] = tvec.flatten()
-            cam2kuka_cam = np.linalg.inv(kuka_cam2cam)
-            cam2kuka = kuka_cam2kuka @ cam2kuka_cam
-            kuka2cam = np.linalg.inv(cam2kuka)
-            E = kuka2cam.tolist()
-            extrinsics_dict[f'cam{camera_idx}'] = E
-        # save json
-        with open(args.out_file, 'w') as f:
-            json.dump(extrinsics_dict, f)
+    # calibrate each camera
+    extrinsics_dict = {'base_cam_id': kuka_cam_id}
+    for camera_idx in range(num_cameras):
+        if camera_idx == kuka_cam_id:
+            kuka_cam2cam = np.eye(4)
+        else:
+            pts2d = np.concatenate(imgpoints_dict[f'cam{camera_idx}'], axis=0) # pix in camera_i
+            pts3d = np.concatenate(objpoints2kuka_cam_dict[f'cam{camera_idx}'], axis=0) # pts3d in kuka_cam frame
+            K = intrinsics_dict[f'cam{camera_idx}']
+            ret, rvec, tvec = cv2.solvePnP(pts3d, pts2d, K, distCoeffs=np.zeros(5)) # get camera_i to kuka_cam
+            rotm = cv2.Rodrigues(rvec)[0]
+            kuka_cam2cam = np.eye(4)
+            kuka_cam2cam[:3, :3] = rotm
+            kuka_cam2cam[:3, 3] = tvec.flatten()
+        cam2kuka_cam = np.linalg.inv(kuka_cam2cam)
+        cam2kuka = kuka_cam2kuka @ cam2kuka_cam
+        kuka2cam = np.linalg.inv(cam2kuka)
+        E = kuka2cam.tolist()
+        extrinsics_dict[f'cam{camera_idx}'] = E
+    # save json
+    with open(args.out_file, 'w') as f:
+        json.dump(extrinsics_dict, f)
         # make every camera relative to camera kuka

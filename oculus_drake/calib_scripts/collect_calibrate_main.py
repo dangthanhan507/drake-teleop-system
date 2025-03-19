@@ -23,16 +23,18 @@ if __name__ == '__main__':
     )
     cameras.start(exposure_time=10)
     # 4.85cm
-    arucoDict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_1000)
-    arucoParams = cv2.aruco.DetectorParameters_create()
+    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_1000)
+    arucoParams = cv2.aruco.DetectorParameters()
     arucoParams.adaptiveThreshWinSizeStep=40
     arucoParams.adaptiveThreshWinSizeMax=100
     arucoParams.aprilTagMinClusterPixels=1000
     index = 0
+    if os.path.exists(os.path.join(args.out_folder, "cam0")):
+        index = len(os.listdir(os.path.join(args.out_folder, "cam0")))
     
     MARKER_LENGTH = 0.0485
     MARKER_SEPARATION = 0.016
-    aruco_grid = cv2.aruco.GridBoard_create(3,3, MARKER_LENGTH, MARKER_SEPARATION, arucoDict)
+    aruco_grid = cv2.aruco.GridBoard((3,3), MARKER_LENGTH, MARKER_SEPARATION, arucoDict)
     intrinsics = cameras.get_intrinsics()
     while 1:
         try:
@@ -41,18 +43,16 @@ if __name__ == '__main__':
             recent_obs = cameras.get_obs(get_color=True, get_depth=False)
             
             rgbs = []
+            fail = False
             for i in range(cameras.n_fixed_cameras):
                 rgb = recent_obs[f'color_{i}'][-1]
                 gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
                 corners, ids, _ = cv2.aruco.detectMarkers(gray, arucoDict, parameters=arucoParams)
-                # rgb_draw = cv2.aruco.drawDetectedMarkers(rgb.copy(), corners, ids)
-                
-                retval, rvec, tvec = cv2.aruco.estimatePoseBoard(corners, ids, aruco_grid, intrinsics[i], np.zeros(5), None, None)
-                rgb_draw = cv2.drawFrameAxes(rgb.copy(), intrinsics[i], np.zeros(5), rvec, tvec, 0.1)
-                
-                # get rotation matrix from rvec
-                rmat = cv2.Rodrigues(rvec)[0]
-                
+                if len(corners) > 3:
+                    retval, rvec, tvec = cv2.aruco.estimatePoseBoard(corners, ids, aruco_grid, intrinsics[i], np.zeros(5), None, None)
+                    rgb_draw = cv2.drawFrameAxes(rgb.copy(), intrinsics[i], np.zeros(5), rvec, tvec, 0.1)
+                else:
+                    rgb_draw = rgb
                 rgbs.append(rgb_draw)
             
             rgbs_vis = np.hstack(rgbs)
@@ -65,6 +65,7 @@ if __name__ == '__main__':
                 for i in range(cameras.n_fixed_cameras):
                     cv2.imwrite(f"{args.out_folder}/cam{i}/{index:04d}.png", recent_obs[f'color_{i}'][-1])
                 print("Saved images to ", args.out_folder)
+                print("Index: ", index)
                 index += 1
         except KeyboardInterrupt:
             break
