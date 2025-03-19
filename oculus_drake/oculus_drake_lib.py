@@ -184,7 +184,7 @@ class OculusTeleopSystem(LeafSystem):
         self.commanded_pose: RigidTransform = self.base_pose.__copy__()
         
 
-        flip_axis = RigidTransform(RotationMatrix.MakeZRotation(np.pi/2)) # flip the frame that the oculus lives in such that it aligns with kuka.
+        flip_axis = RigidTransform(RotationMatrix.MakeZRotation(0.0)) # flip the frame that the oculus lives in such that it aligns with kuka.
         if trigger:
             
             self.current_controller_pose = self.oculus.right_pose.__copy__() @ flip_axis
@@ -647,7 +647,7 @@ class CameraRecorder(LeafSystem):
     def start(self):    
         self.process_save = mp.Process(target=CameraRecorder.camera_async_write, args=(self.save_folder,))
         self.process_save.start()
-        time.sleep(5.0)
+        time.sleep(10.0)
     def end(self):
         _obs_queue = CameraRecorder._obs_queue
         _obs_queue.put(None)
@@ -670,6 +670,7 @@ class CameraRecorder(LeafSystem):
             process_depth=True,
         )
         cameras.start(exposure_time=10)
+        time.sleep(5.0)
         for i in range(cameras.n_fixed_cameras):
             os.makedirs(f'{save_folder}/camera_{i}/', exist_ok=True)
         trigger = 5

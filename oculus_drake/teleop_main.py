@@ -4,6 +4,7 @@ from pydrake.all import (
     StartMeshcat
 )
 import numpy as np
+from oculus_drake import HOME_Q
 
 if __name__ == '__main__':
     sim = False
@@ -11,8 +12,7 @@ if __name__ == '__main__':
     if not sim:
         input("Press Enter to set Kuka to home position...")
         MAX_JOINT_SPEED = 20.0 * np.pi / 180
-        home_q = np.array([-90.0, 30.0, 0.0, -70.0, 0.0, 75.0, 0.0]) * np.pi / 180
-        set_kuka_joints(home_q, endtime = 5.0, joint_speed=MAX_JOINT_SPEED, use_mp=True)
+        set_kuka_joints(HOME_Q, endtime = 5.0, joint_speed=MAX_JOINT_SPEED, use_mp=True)
     
     meshcat = StartMeshcat()
     diagram = setup_sim_teleop_diagram(meshcat) if sim else setup_teleop_diagram(meshcat)

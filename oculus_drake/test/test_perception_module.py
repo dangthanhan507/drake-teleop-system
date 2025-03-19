@@ -19,7 +19,7 @@ if __name__ == '__main__':
     )
     cameras.start(exposure_time=10)
     
-    time.sleep(10)
+    time.sleep(5)
     
     obs = cameras.get_obs(get_depth=True, get_color=True)
     perception = Perception3DModule()
@@ -33,7 +33,7 @@ if __name__ == '__main__':
     intrinsics = np.array([intrinsics[f'cam{i}'] for i in range(n_cams)])
     extrinsics = load_extrinsics('calibration/camera_extrinsics.json')
     extrinsics = np.array([extrinsics[f'cam{i}'] for i in range(n_cams)])
-    pts3d, ptsrgb = perception.get_pcd(colors, depths, intrinsics, extrinsics, object_names=['green bottle'])
+    pts3d, ptsrgb = perception.get_pcd(colors, depths, intrinsics, extrinsics, object_names=['red mug'])
     # pts3d, ptsrgb = perception.get_scene_pcd(colors, depths, intrinsics, extrinsics)
     # o3d vis
     
