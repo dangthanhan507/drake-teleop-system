@@ -15,7 +15,7 @@ def processaction(
         ):
         teleop_dataset = TeleopSequenceDataset(teleop_data_dir, get_V_WE=False)
         qs_command = teleop_dataset.joints_commanded
-        ts = teleop_dataset.ts
+        gripper_outs = teleop_dataset.commanded_gripper_pos
         
         scenario = load_scenario(filename=FAKE_SCENARIO_FILEPATH, scenario_name='Demo')
         station = MakeFakeStation(scenario)
@@ -38,7 +38,11 @@ def processaction(
             
             # concatenate the axis-angle and translation
             command = np.concatenate([axis_angle.angle() * axis_angle.axis(), tvec])
-            np.save(os.path.join(teleop_data_dir, 'action', f'dpose_{i:04d}.npy'), command)
+            action = np.concatenate([command, gripper_outs[i]])
+            np.save(os.path.join(teleop_data_dir, 'action', f'action_{i:04d}.npy'), action)
+        
+        i = len(teleop_dataset)-1
+        np.save(os.path.join(teleop_data_dir, 'action', f'action_{i:04d}.npy'), command)
             
 
 if __name__ == '__main__':
