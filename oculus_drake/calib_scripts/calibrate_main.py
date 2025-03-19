@@ -46,7 +46,7 @@ if __name__ == '__main__':
             objpoints2kuka_cam_dict[f'cam{camera_idx}'] = []
             imgpoints_dict[f'cam{camera_idx}'] = []
     
-    for frame_idx in range(num_frames):
+    for frame_idx in tqdm(range(num_frames)):
         camera_idx = kuka_cam_id
         img = cv2.imread(os.path.join(cam_paths[f'cam{camera_idx}'], f'{frame_idx:04d}.png'))
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
