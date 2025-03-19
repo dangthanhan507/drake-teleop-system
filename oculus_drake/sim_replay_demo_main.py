@@ -27,7 +27,7 @@ class ManualPublishPCL(LeafSystem):
         self.intrinsic_folder = intrinsics_folder
         self.extrinsics = load_extrinsics(extrinsics_folder)
         self.intrinsics = load_intrinsics(intrinsics_folder)
-        self.num_cams = sum([1 for item in os.listdir(self.load_folder) if item.startswith('camera_')])
+        self.num_cams = sum([1 for item in os.listdir(self.load_folder) if item.startswith('camera_') and os.path.isdir(os.path.join(self.load_folder, item))])
         self.DeclareAbstractOutputPort("pcl", lambda: Value(PointCloud()), self.PublishPCL)
         self.idx = 0
         
