@@ -1,4 +1,9 @@
-from oculus_drake_lib import setup_teleop_diagram, setup_sim_teleop_diagram, set_kuka_joints
+from oculus_drake_lib import (
+    setup_teleop_diagram,
+    setup_sim_teleop_diagram,
+    set_kuka_joints,
+    setup_teleop_spacemouse_diagram
+)
 from pydrake.all import (
     Simulator,
     StartMeshcat
@@ -15,7 +20,8 @@ if __name__ == '__main__':
         set_kuka_joints(HOME_Q, endtime = 5.0, joint_speed=MAX_JOINT_SPEED, use_mp=True)
     
     meshcat = StartMeshcat()
-    diagram = setup_sim_teleop_diagram(meshcat) if sim else setup_teleop_diagram(meshcat)
+    # diagram = setup_sim_teleop_diagram(meshcat) if sim else setup_teleop_diagram(meshcat)
+    diagram = setup_sim_teleop_diagram(meshcat) if sim else setup_teleop_spacemouse_diagram(meshcat)
     simulator = Simulator(diagram)
     
     if sim:

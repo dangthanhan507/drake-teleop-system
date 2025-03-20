@@ -14,6 +14,9 @@ from pydrake.all import (
     PiecewisePose,
     ConstantVectorSource,
     Simulator,
+    DoDifferentialInverseKinematics,
+    DifferentialInverseKinematicsStatus,
+    EventStatus
 )
 from manipulation.scenarios import AddMultibodyTriad
 from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation, DiffIKSystem, DiffIKParams
@@ -23,6 +26,7 @@ from oculus_reader.reader import OculusReader
 from enum import Enum
 import numpy as np
 import time
+import pyspacemouse
 
 from oculus_drake.realsense.cameras import Cameras
 import os
@@ -245,6 +249,129 @@ class OculusTeleopSystem(LeafSystem):
         
         output.set_value(self.commanded_pose)
 
+class SpacemouseDiffIK(LeafSystem):
+    def __init__(self, plant, frame_E, diffik_period, velocity_limit=0.03,):
+        """
+        Args:
+            meshcat: A Meshcat instance.
+            plant: A multibody plant (to use for differential ik). It is
+              probably the plant used for control, not for simulation (it should only contain the robot, not the objects).
+            frame: A frame in to control `plant`.
+        """
+        LeafSystem.__init__(self)
+        
+        self.velocity_limit = velocity_limit
+        self.DeclareVectorInputPort("robot_state", plant.num_multibody_states())
+        self.DeclareInitializationDiscreteUpdateEvent(self.Initialize)
+
+        port = self.DeclareVectorOutputPort(
+            "iiwa.position", plant.num_positions(), self.OutputIiwaPosition
+        )
+        port = self.DeclareVectorOutputPort(
+            "V_WE", 6, self.OutputV_WE
+        )
+        port = self.DeclareVectorOutputPort(
+            "gripper_out", 1, self.OutputGripper
+        )
+        # The gamepad has undeclared state.  For now, we accept it,
+        # and simply disable caching on the output port.
+        port.disable_caching_by_default()
+
+
+        self.DeclareDiscreteState(plant.num_positions())  # iiwa position
+        self.DeclareDiscreteState(6) # V_WE
+        self._time_step = plant.time_step()
+        self.DeclarePeriodicDiscreteUpdateEvent(self._time_step, 0, self.Integrate)
+
+        self._plant = plant
+        self._plant_context = plant.CreateDefaultContext()
+
+        if frame_E is None:
+            frame_E = plant.GetFrameByName("grasp_frame")  # wsg gripper frame
+        self._frame_E = frame_E
+
+        self._diff_ik_params = DiffIKParams(plant, xyz_speed_limit=velocity_limit, time_step=diffik_period)
+        
+        
+        self.stick_x = 0
+        self.stick_y = 0
+        self.stick_z = 0
+        self.stick_wx = 0
+        self.stick_wy = 0
+        self.stick_wz = 0
+        self.button_front = False
+        self.button_back = False
+        
+        
+        pmouse_success = pyspacemouse.open()
+        assert pmouse_success, "Failed to open spacemouse."
+        
+
+    def Initialize(self, context, discrete_state):
+        discrete_state.set_value(
+            0,
+            self.get_input_port().Eval(context)[: self._plant.num_positions()],
+        )
+        discrete_state.set_value(
+            1,
+            np.zeros(6)
+        )
+
+    def Integrate(self, context, discrete_state):
+        # https://beej.us/blog/data/javascript-gamepad/
+        def StickDeadzone(x, y, z, deadzone = 0.1):
+            stick = np.array([x,y,z])
+            m = np.linalg.norm(stick)
+            if m < deadzone:
+                return np.array([0, 0, 0])
+            over = (m - deadzone) / (1 - deadzone)
+            return stick * over / m
+        
+        state = pyspacemouse.read()
+        command_xyz = StickDeadzone(state.x, state.y, state.z)
+        command_rpy = StickDeadzone(state.roll, state.pitch, state.yaw)
+        self.stick_x = command_xyz[0]
+        self.stick_y = command_xyz[1]
+        self.stick_z = command_xyz[2]
+        self.stick_wx = command_rpy[0]
+        self.stick_wy = command_rpy[1]
+        self.stick_wz = command_rpy[2]
+        self.button_front = state.buttons[0] == 1
+        self.button_back = state.buttons[1] == 1
+        
+        V_WE_desired = np.zeros((6,))
+        V_WE_desired[0] = 0.2 * self.stick_wx
+        V_WE_desired[1] = 0.2 * self.stick_wy
+        V_WE_desired[2] = 0.2 * self.stick_wz
+        V_WE_desired[3] = self.velocity_limit * self.stick_x
+        V_WE_desired[4] = -self.velocity_limit * self.stick_y
+        V_WE_desired[5] = self.velocity_limit * self.stick_z
+
+        q = np.copy(context.get_discrete_state(0).get_value())
+        self._plant.SetPositions(self._plant_context, q)
+        result = DoDifferentialInverseKinematics(
+            self._plant,
+            self._plant_context,
+            V_WE_desired,
+            self._frame_E,
+            self._diff_ik_params,
+        )
+        
+        if result.status != DifferentialInverseKinematicsStatus.kNoSolutionFound:
+            discrete_state.set_value(0, q + self._time_step * result.joint_velocities)
+            discrete_state.set_value(1, V_WE_desired)
+            
+        return EventStatus.Succeeded()
+    def OutputV_WE(self, context, output):
+        output.set_value(context.get_discrete_state(1).get_value())
+    def OutputIiwaPosition(self, context, output):
+        output.set_value(context.get_discrete_state(0).get_value())
+    def OutputGripper(self, context, output):
+        gripper_open = 0.1
+        gripper_close = 0.0
+        out_val = gripper_close if self.button_front else gripper_open
+        output.SetFromVector([out_val])
+
 # setup pose from oculus
 def setup_sim_teleop_diagram(meshcat: Meshcat):
     builder = DiagramBuilder()
@@ -314,6 +441,48 @@ class KukaEndEffectorPose(LeafSystem):
         self._plant.SetPositions(self._plant_context, q)
         pose = self._plant.GetFrameByName(self._frame_name).CalcPoseInWorld(self._plant_context)
         output.set_value(pose)
+
+def setup_teleop_spacemouse_diagram(meshcat):
+    builder = DiagramBuilder()
+    scenario = load_scenario(filename=SCENARIO_FILEPATH, scenario_name='Demo')
+    station = builder.AddNamedSystem("station", MakeHardwareStationInterface(scenario, meshcat=meshcat))
+    
+    fake_scenario = load_scenario(filename=FAKE_SCENARIO_FILEPATH, scenario_name='Demo')
+    fake_station = MakeFakeStation(fake_scenario)
+    diff_ik_plant = fake_station.GetSubsystemByName("plant")
+    xyz_speed_limit = 0.1
+    diffik_period = 1e-4
+    
+    differential_ik = builder.AddSystem(
+        SpacemouseDiffIK(
+            diff_ik_plant,
+            diff_ik_plant.GetFrameByName("grasp_frame"),
+            diffik_period,
+            velocity_limit=xyz_speed_limit
+        )
+    )
+    builder.Connect(
+        differential_ik.GetOutputPort("iiwa.position"),
+        station.GetInputPort("iiwa.position"),
+    )
+    builder.ExportOutput( differential_ik.GetOutputPort("V_WE"), "V_WE")
+    
+    iiwa_state = builder.AddSystem(Multiplexer([7,7]))
+    builder.Connect(
+        station.GetOutputPort("iiwa.position_measured"),
+        iiwa_state.get_input_port(0)
+    )
+    builder.Connect(
+        station.GetOutputPort("iiwa.velocity_estimated"),
+        iiwa_state.get_input_port(1)
+    )
+    builder.Connect(
+        iiwa_state.get_output_port(),
+        differential_ik.GetInputPort("robot_state"),
+    )
+    builder.Connect(differential_ik.GetOutputPort("gripper_out"), station.GetInputPort("wsg.position"))
+    diagram = builder.Build()
+    return diagram
 
 def setup_teleop_diagram(meshcat):
     builder = DiagramBuilder()
