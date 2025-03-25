@@ -1,5 +1,5 @@
 import numpy as np
-from oculus_drake.oculus_drake_lib import TeleopSequenceDataset
+from oculus_drake.dataset import TeleopSequenceDataset
 import os
 from pydrake.all import (
     RigidTransform,
@@ -51,6 +51,6 @@ if __name__ == '__main__':
     parser.add_argument('--teleop_data_dir', type=str, default=None)
     args = parser.parse_args()
     
-    processaction(
-        args.teleop_data_dir,
-    )
+    for demo_name in tqdm(sorted(os.listdir(args.teleop_data_dir))):
+        demo_path = os.path.join(args.teleop_data_dir, demo_name)
+        processaction(demo_path)
