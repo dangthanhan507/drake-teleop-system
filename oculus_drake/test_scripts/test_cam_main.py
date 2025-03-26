@@ -4,7 +4,7 @@ from pydrake.all import (
 )
 import numpy as np
 from oculus_drake.realsense.cameras import Cameras
-from oculus_drake.calib_utils import CameraCalibrateVisSystem
+from oculus_drake.calib_scripts.calib_utils import CameraCalibrateVisSystem
 if __name__ == '__main__':
     
     cameras = Cameras(

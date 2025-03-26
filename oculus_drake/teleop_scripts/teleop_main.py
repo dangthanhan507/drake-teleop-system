@@ -1,4 +1,4 @@
-from oculus_drake_lib import (
+from oculus_drake.oculus_drake_lib import (
     setup_teleop_diagram,
     setup_sim_teleop_diagram,
     set_kuka_joints,

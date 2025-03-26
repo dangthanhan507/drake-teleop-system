@@ -2,7 +2,7 @@ import numpy as np
 from pydrake.geometry import StartMeshcat
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
-from oculus_drake.calib_utils import CameraCalibrateVisSystem, CameraCalibrateVisSystemAsync
+from oculus_drake.calib_scripts.calib_utils import CameraCalibrateVisSystem, CameraCalibrateVisSystemAsync
 from oculus_drake.realsense.cameras import Cameras
 from oculus_drake.oculus_drake_lib import setup_teleop_diagram
 import argparse
