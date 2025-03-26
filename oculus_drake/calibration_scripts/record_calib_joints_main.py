@@ -4,7 +4,7 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from oculus_drake.calib_scripts.calib_utils import CameraCalibrateVisSystem, CameraCalibrateVisSystemAsync
 from oculus_drake.realsense.cameras import Cameras
-from oculus_drake.oculus_drake_lib import setup_teleop_diagram
+from oculus_drake.teleop.oculus_drake_lib import setup_teleop_diagram
 import argparse
 #NOTE: run this to record joint positions of robot for calibration
 

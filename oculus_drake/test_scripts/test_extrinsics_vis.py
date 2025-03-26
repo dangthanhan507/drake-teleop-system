@@ -16,7 +16,7 @@ from pydrake.all import (
     Simulator,
     AddDefaultVisualization
 )
-from oculus_drake.teleop_utils import MakeFakeStation
+from oculus_drake.teleop.teleop_utils import MakeFakeStation
 from manipulation.station import load_scenario
 from manipulation.scenarios import AddMultibodyTriad
 from oculus_drake import FAKE_CALIB_SCENARIO_FILEPATH

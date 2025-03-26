@@ -1,4 +1,4 @@
-from oculus_drake.oculus_drake_lib import record_teleop_diagram, set_kuka_joints
+from oculus_drake.teleop.oculus_drake_lib import record_teleop_diagram, set_kuka_joints
 import argparse
 from pydrake.all import (
     Simulator,

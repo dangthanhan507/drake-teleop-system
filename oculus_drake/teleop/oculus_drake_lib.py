@@ -19,10 +19,10 @@ from pydrake.all import (
     EventStatus
 )
 from manipulation.scenarios import AddMultibodyTriad
-from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation, DiffIKSystem, DiffIKParams
+from oculus_drake.teleop.teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation, DiffIKSystem, DiffIKParams
 from oculus_drake import SCENARIO_FILEPATH, FAKE_SCENARIO_FILEPATH, SCENARIO_NO_WSG_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH, CALIB_SCENARIO_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
-from oculus_drake.dataset import TeleopSequenceDataset
+from oculus_drake.teleop.dataset import TeleopSequenceDataset
 from oculus_reader.reader import OculusReader
 from enum import Enum
 import numpy as np

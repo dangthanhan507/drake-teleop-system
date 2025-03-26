@@ -1,5 +1,5 @@
 import numpy as np
-from oculus_drake.dataset import TeleopSequenceDataset
+from oculus_drake.teleop.dataset import TeleopSequenceDataset
 import os
 from pydrake.all import (
     RigidTransform,
@@ -7,7 +7,7 @@ from pydrake.all import (
     Quaternion
 )
 from oculus_drake import FAKE_SCENARIO_FILEPATH
-from oculus_drake.teleop_utils import MakeFakeStation
+from oculus_drake.teleop.teleop_utils import MakeFakeStation
 from manipulation.station import load_scenario
 from tqdm import tqdm
 def processaction(

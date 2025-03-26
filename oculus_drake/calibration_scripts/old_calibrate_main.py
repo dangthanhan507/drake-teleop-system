@@ -3,7 +3,7 @@ import argparse
 import pupil_apriltags
 from tqdm import tqdm
 from oculus_drake.realsense.cameras import Cameras
-from oculus_drake.oculus_drake_lib import set_kuka_joints, get_kuka_pose
+from oculus_drake.teleop.oculus_drake_lib import set_kuka_joints, get_kuka_pose
 from oculus_drake import CALIB_SCENARIO_FILEPATH, FAKE_CALIB_SCENARIO_FILEPATH
 # given list of joints, follow each joint and take 10 seconds to go to each joint
 from collections import defaultdict

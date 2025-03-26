@@ -1,7 +1,7 @@
 from pydrake.all import (
     RigidTransform,
 )
-from teleop_utils import MakeFakeStation
+from oculus_drake.teleop.teleop_utils import MakeFakeStation
 from oculus_drake import FAKE_SCENARIO_FILEPATH
 from manipulation.station import load_scenario
 import numpy as np

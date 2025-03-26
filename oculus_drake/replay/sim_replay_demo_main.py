@@ -11,7 +11,7 @@ from pydrake.all import (
 )
 from oculus_drake import SCENARIO_FILEPATH
 from manipulation.station import load_scenario, MakeHardwareStationInterface
-from teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
+from oculus_drake.teleop.teleop_utils import MakeHardwareStation, AddIiwaDifferentialIK, MakeFakeStation
 from oculus_drake.realsense.cameras import load_extrinsics, load_intrinsics, depth2pcd
 import argparse
 import os

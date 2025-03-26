@@ -2,9 +2,9 @@ import numpy as np
 from pydrake.geometry import StartMeshcat
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
-from oculus_drake.oculus_drake_lib import setup_replay_diagram, set_kuka_joints
+from oculus_drake.teleop.oculus_drake_lib import setup_replay_diagram, set_kuka_joints
 import argparse
-from oculus_drake.oculus_drake_lib import ReplayType
+from oculus_drake.teleop.oculus_drake_lib import ReplayType
 from oculus_drake import HOME_Q
 #NOTE: run this to record joint positions of robot for calibration
 
